@@ -1,0 +1,2398 @@
+---
+title: "FRIC_DevelopmentalChange"
+author: "LJS"
+date: "2025-01-14"
+output: html_document
+---
+
+
+# Libraries 
+
+```{r setup, include=FALSE}
+
+library("rlang") #toolbox
+library("readr") #toolbox
+library("dplyr") #data manipulation
+library("purrr") #data manipulation
+library("tidyr") #data manipulation
+library("here") #toolbox
+library("tidyverse") #data manipulation
+library("ggpubr") #plotting
+library("tidytext") #data manipulation
+library("knitr") #rmarkdown
+library("htmltools") #rmarkdown
+library("markdown") #rmarkdown
+library("httpuv") #rmarkdown
+library("NCmisc") #toolbox
+library("stringr") #data manipulation
+library("reshape") #data manipulation
+library("reshape2") #data manipulation
+library("lme4") #regression models
+library("lmerTest") #regression models
+library("broom.mixed") #save regression results
+library("car") #VIF
+library("VIM") #visualise missing data
+library("gridExtra") #combine plots
+library("patchwork") #combine plots
+
+```
+
+
+# Face Responses in Childhood (FRIC) project
+
+This script characterises age-related changes in functional maturity, response magnitude to face/scene events and functional connectivity of FFA, MMPFC, STS and amygdala, as well as age-related changes in lateralisation of face response in FFA.
+
+Structure:
+- Section I: Functional maturity measure (fm) i.e., similarity between children’s and adults’ timecourses’
+- Section II: Magnitude of responses of each ROI at face/scene events
+- Section III: Age effects on functional connectivity (fx) between regions
+- Section IV: Age effects on lateralisation of face response (non-preregistered)
+
+
+## Section I: Functional maturity measure (fm) i.e., similarity between children’s and adults’ timecourses’
+
+### Read and tidy up data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names=TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]","", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+# Motion
+
+motion <- read_tsv(here("raw_data/motion", "outlier_info.tsv"), col_names=TRUE)
+colnames(motion)[which(names(motion) == "subject")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+motion$ID <- gsub("[sub-pixar-]","", motion$ID)
+motion$ID <- trimws(motion$ID)
+
+# Fm
+
+child_fm <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+child_fm <- child_fm[,c(1:9)]
+
+## Reshape the dataset to long format
+
+long_data <- child_fm %>%
+  pivot_longer(cols = starts_with("zscored_fm_"), 
+               names_to = c("hemisphere", "region"), 
+               names_pattern = "zscored_fm_(l|r)(.*)",  # Capture hemisphere and region
+               values_to = "fm") %>%
+  mutate(hemisphere = ifelse(hemisphere == "l", "left", "right"))  # Convert l/r to left/right
+
+# Merge age, motion and fm data
+
+fm_data <- merge(long_data, participants[,c(1:2)], by="ID")
+fm_data <- merge(fm_data, motion[,c(4,6)], by="ID")
+colnames(fm_data) <- c("ID", "hemisphere", "region", "fm", "age", "meanFD")
+
+# Ensure categorical variables are treated as factors
+
+fm_data$ID <- as.factor(fm_data$ID)
+fm_data$hemisphere <- as.factor(fm_data$hemisphere)
+fm_data$region <- as.factor(fm_data$region)
+
+# Scale predictors
+
+fm_data[, c("age", "meanFD")] <- scale(fm_data[, c("age", "meanFD")])
+
+```
+
+### Models
+
+With interaction effects
+
+```{r}
+
+# FFA
+
+fm_data_FFA <- subset(fm_data, region == "FFA")
+model_FFA <- lmer(fm ~ age*hemisphere + meanFD + (1 | ID), data = fm_data_FFA)
+summary_FFA <- tidy(model_FFA)
+
+# MMPFC
+
+fm_data_MMPFC <- subset(fm_data, region == "MMPFC")
+model_MMPFC <- lmer(fm ~ age*hemisphere + meanFD + (1 | ID), data = fm_data_MMPFC)
+summary_MMPFC <- tidy(model_MMPFC)
+
+# Amygdala
+
+fm_data_amygdala <- subset(fm_data, region == "amygdala")
+model_amygdala <- lmer(fm ~ age*hemisphere + meanFD + (1 | ID), data = fm_data_amygdala)
+summary_amygdala <- tidy(model_amygdala)
+
+# STS
+
+fm_data_STS <- subset(fm_data, region == "STS")
+model_STS <- lmer(fm ~ age*hemisphere + meanFD + (1 | ID), data = fm_data_STS)
+summary_STS <- tidy(model_STS)
+
+# Summary
+
+all_summaries <- bind_rows(
+  summary_FFA %>% mutate(region = "FFA"),
+  summary_MMPFC %>% mutate(region = "MMPFC"),
+  summary_amygdala %>% mutate(region = "amygdala"),
+  summary_STS %>% mutate(region = "STS")
+)
+view(all_summaries)
+
+```
+
+Since interaction effects are non-sig, repeat models without interaction effects
+
+```{r}
+
+# FFA
+
+fm_data_FFA <- subset(fm_data, region == "FFA")
+model_FFA <- lmer(fm ~ age + hemisphere + meanFD + (1 | ID), data = fm_data_FFA)
+summary_FFA <- tidy(model_FFA)
+
+# MMPFC
+
+fm_data_MMPFC <- subset(fm_data, region == "MMPFC")
+model_MMPFC <- lmer(fm ~ age + hemisphere + meanFD + (1 | ID), data = fm_data_MMPFC)
+summary_MMPFC <- tidy(model_MMPFC)
+
+# Amygdala
+
+fm_data_amygdala <- subset(fm_data, region == "amygdala")
+model_amygdala <- lmer(fm ~ age + hemisphere + meanFD + (1 | ID), data = fm_data_amygdala)
+summary_amygdala <- tidy(model_amygdala)
+
+# STS
+
+fm_data_STS <- subset(fm_data, region == "STS")
+model_STS <- lmer(fm ~ age + hemisphere + meanFD + (1 | ID), data = fm_data_STS)
+summary_STS <- tidy(model_STS)
+
+# Save results
+
+all_summaries <- bind_rows(
+  summary_FFA %>% mutate(region = "FFA"),
+  summary_MMPFC %>% mutate(region = "MMPFC"),
+  summary_amygdala %>% mutate(region = "amygdala"),
+  summary_STS %>% mutate(region = "STS")
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ1", "Fm_age.csv"), row.names = FALSE)
+
+```
+
+### Model plots
+
+Age and functional maturity
+
+```{r}
+
+# Data wrangling
+
+data_plot <- fm_data
+data_plot$age <- NULL
+data_plot$meanFD <- NULL
+data_plot <- merge(data_plot, participants[,c(1:2)], by="ID")
+colnames(data_plot) <- c("ID", "hemisphere", "region", "fm", "age")
+data_plot_FFA <- subset(data_plot, region == "FFA")
+data_plot_STS <- subset(data_plot, region == "STS")
+data_plot_MMPFC <- subset(data_plot, region == "MMPFC")
+data_plot_amygdala <- subset(data_plot, region == "amygdala")
+
+# Colours
+
+custom_colours_amygdala <- c("#E1AA9F", "#D34835")
+custom_colours_MMPFC <- c("#87BACF", "#578CAD")
+custom_colours_FFA <- c("#C39EDA", "#652975")
+custom_colours_STS <- c("#FFF865", "#FFCE1B")
+
+# FFA plot
+
+plot_FFA <- ggplot(data_plot_FFA, aes(x = age, y = fm, color = hemisphere)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 19) +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +  
+  scale_color_manual(values = custom_colours_FFA) +  
+  labs(title = "",
+       x = "Age",
+       y = "Functional maturity",
+       color = "FFA Hemisphere") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),   
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
+  coord_cartesian(ylim = c(-3, 3)) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = "Age effect: \nβ(SE)=0.26(0.07), p<0.001",  
+    hjust = 1.05,
+    vjust = -0.5,
+    size = 4,
+    color = "black"
+)
+
+# MMPFC plot
+
+plot_MMPFC <- ggplot(data_plot_MMPFC, aes(x = age, y = fm, color = hemisphere)) +
+  geom_point(alpha = 0.8, size = 2.8, shape = 19) +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +  
+  scale_color_manual(values = custom_colours_MMPFC) +  
+  labs(title = "",
+       x = "Age",
+       y = "",
+       color = "MMPFC Hemisphere") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),   
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
+  coord_cartesian(ylim = c(-3, 3))  +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = "Age effect: \nβ(SE)=0.35(0.07), p<0.001",
+    hjust = 1.05,
+    vjust = -0.5,
+    size = 4,
+    color = "black"
+)
+
+# Amygdala plot
+
+plot_amygdala <- ggplot(data_plot_amygdala, aes(x = age, y = fm, color = hemisphere)) +
+  geom_point(alpha = 0.8, size = 2.8, shape = 19) +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +  
+  scale_color_manual(values = custom_colours_amygdala) +  
+  labs(
+    title = "",
+    x = "Age",
+    y = "",
+    color = "Amygdala Hemisphere"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),   
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")
+  ) +   
+  coord_cartesian(ylim = c(-3, 3)) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = "Age effect: \nβ(SE)=0.20(0.08), p=0.016",
+    hjust = 1.05,
+    vjust = -0.5,
+    size = 4,
+    color = "black"
+)
+
+# STS plot
+
+plot_STS <- ggplot(data_plot_STS, aes(x = age, y = fm, color = hemisphere)) +
+  geom_point(alpha = 0.8, size = 2.5, shape = 19) +  
+  geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +  
+  scale_color_manual(values = custom_colours_STS) +  
+  labs(title = "",
+       x = "Age",
+       y = "",
+       color = "STS Hemisphere") +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),   
+    axis.title = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
+  coord_cartesian(ylim = c(-3, 3)) +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,
+    label = "Age effect: \nβ(SE)=0.24(0.07), p<0.001",
+    hjust = 1.05,
+    vjust = -0.5,
+    size = 4,
+    color = "black"
+)
+
+# Combine and save plots
+
+fm_age <- (plot_FFA | plot_MMPFC | plot_amygdala | plot_STS) +  
+  plot_annotation(title = "Functional maturity across Age") &  
+  theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+fm_age  
+ggsave(here("results/figures", "Fm_age.png"), plot = fm_age, width = 17, height = 5, units = "in", dpi = 300)
+
+```
+
+
+## Section II: Magnitude of responses of each ROI at face/scene events
+
+### Read data
+
+```{r}
+
+# Events magnitude
+
+child_eventsmagnitude <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+child_eventsmagnitude <- child_eventsmagnitude[,c(1, 10:201)]
+
+# Reshape the dataset to long format
+
+long_data <- child_eventsmagnitude %>%
+  pivot_longer(
+    cols = -ID,  # Exclude the ID column
+    names_to = c("region", "event"),  # Split names into region and event
+    names_pattern = "([lr]?[^_]+)_(F\\d{2}|S\\d{2})",  # Match region and event
+    values_to = "value"  # The name of the new column for values
+  ) %>%
+  mutate(
+    hemisphere = if_else(grepl("^l", region), "left", "right"),  # Add hemisphere based on region prefix
+    region = gsub("^[lr]", "", region)  # Remove hemisphere prefix from region
+  ) %>%
+  pivot_wider(
+    names_from = "event",  # Make "event" column headers
+    values_from = "value"  # Fill the values for each event
+  )
+long_data <- long_data %>%
+  select(ID, hemisphere, region, F01, F02, F03, F04, F05, F06, F07, F08, F09, F10, F11, F12, 
+         S01, S02, S03, S04, S05, S06, S07, S08, S09, S10, S11, S12) 
+
+# Merge age, motion and fm data
+
+eventsmagnitude_data <- merge(long_data, participants[,c(1:2)], by="ID")
+eventsmagnitude_data <- merge(eventsmagnitude_data, motion[,c(4,6)], by="ID")
+colnames(eventsmagnitude_data) <- c("ID", "hemisphere", "region", "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S09", "S10", "S11", "S12", "age", "meanFD")
+
+# Scale predictors
+
+eventsmagnitude_data[, c("age", "meanFD")] <- scale(eventsmagnitude_data[, c("age", "meanFD")])
+
+# Ensure categorical variables are treated as factors
+
+eventsmagnitude_data$ID <- as.factor(eventsmagnitude_data$ID)
+eventsmagnitude_data$hemisphere <- as.factor(eventsmagnitude_data$hemisphere)
+eventsmagnitude_data$region <- as.factor(eventsmagnitude_data$region)
+
+```
+
+### Models
+
+FFA
+
+```{r}
+
+# Read data
+
+eventsmagnitude_data_FFA <- subset(eventsmagnitude_data, region == "FFA")
+
+## Face events
+
+### Models with interaction effects
+
+events <- paste0("F", sprintf("%02d", 1:12))
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_FFA)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_FFA_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+summaries_FFA_face_events$region <- "FFA"
+summaries_FFA_face_events <- summaries_FFA_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events, repeat models without interaction effects for all events
+
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_FFA)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_FFA_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_FFA_face_events$region <- "FFA"
+summaries_FFA_face_events$p.value <- as.numeric(summaries_FFA_face_events$p.value)
+summaries_FFA_face_events <- summaries_FFA_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+## Scene events
+
+### Models with interaction effects
+
+events <- paste0("S", sprintf("%02d", 1:12))  #generates S01, S02, ..., S12
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_FFA)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_FFA_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_FFA_scene_events$region <- "FFA"
+summaries_FFA_scene_events <- summaries_FFA_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events, repeat models without interaction effects for all events
+
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_FFA)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_FFA_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_FFA_scene_events$region <- "FFA"
+summaries_FFA_scene_events$p.value <- as.numeric(summaries_FFA_scene_events$p.value)
+summaries_FFA_scene_events <- summaries_FFA_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+```
+
+MMPFC
+
+```{r}
+
+# Read data
+
+eventsmagnitude_data_MMPFC <- subset(eventsmagnitude_data, region == "MMPFC")
+
+## Face events
+
+### Models with interaction effects
+
+events <- paste0("F", sprintf("%02d", 1:12))
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_MMPFC)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_MMPFC_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_MMPFC_face_events$region <- "MMPFC"
+summaries_MMPFC_face_events <- summaries_MMPFC_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events but F05, F07, F10 and F12, repeat models without interaction effects for all events but F05, F06, F07, F10 and F12
+
+events <- c("F01", "F02", "F03", "F04", "F06", "F08", "F09", "F11")
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_MMPFC)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_MMPFC_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+model_MMPFC_F05 <- lmer(F05 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_MMPFC)
+summary_MMPFC_F05 <- tidy(model_MMPFC_F05)              
+summary_MMPFC_F05 <- summary_MMPFC_F05 %>% mutate(event = "F05")
+model_MMPFC_F07 <- lmer(F07 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_MMPFC)
+summary_MMPFC_F07 <- tidy(model_MMPFC_F07)              
+summary_MMPFC_F07 <- summary_MMPFC_F07 %>% mutate(event = "F07")
+model_MMPFC_F10 <- lmer(F10 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_MMPFC)
+summary_MMPFC_F10 <- tidy(model_MMPFC_F10)              
+summary_MMPFC_F10 <- summary_MMPFC_F10 %>% mutate(event = "F10")
+model_MMPFC_F12 <- lmer(F12 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_MMPFC)
+summary_MMPFC_F12 <- tidy(model_MMPFC_F12)              
+summary_MMPFC_F12 <- summary_MMPFC_F12 %>% mutate(event = "F12")
+summaries_MMPFC_face_events <- bind_rows(summaries_MMPFC_face_events, summary_MMPFC_F05, summary_MMPFC_F07, summary_MMPFC_F10, summary_MMPFC_F12)
+summaries_MMPFC_face_events$region <- "MMPFC"
+summaries_MMPFC_face_events$p.value <- as.numeric(summaries_MMPFC_face_events$p.value)
+summaries_MMPFC_face_events <- summaries_MMPFC_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+## Scene events
+
+### Models with interaction effects
+
+events <- paste0("S", sprintf("%02d", 1:12))  #generates S01, S02, ..., S12
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_MMPFC)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_MMPFC_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+summaries_MMPFC_scene_events$region <- "MMPFC"
+summaries_MMPFC_scene_events <- summaries_MMPFC_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events, repeat models without interaction effects for all events
+
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_MMPFC)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_MMPFC_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_MMPFC_scene_events$region <- "MMPFC"
+summaries_MMPFC_scene_events$p.value <- as.numeric(summaries_MMPFC_scene_events$p.value)
+summaries_MMPFC_scene_events <- summaries_MMPFC_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+```
+
+Amygdala
+
+```{r}
+
+# Read data
+
+eventsmagnitude_data_amygdala <- subset(eventsmagnitude_data, region == "amygdala")
+
+## Face events
+
+### Models with interaction effects
+
+events <- paste0("F", sprintf("%02d", 1:12))
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_amygdala)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+
+summaries_amygdala_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+
+summaries_amygdala_face_events$region <- "amygdala"
+summaries_amygdala_face_events <- summaries_amygdala_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events but F04, repeat models without interaction effects for all events but F04
+
+events <- c("F01", "F02", "F03", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12")
+
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_amygdala)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+
+summaries_amygdala_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+model_amygdala_F04 <- lmer(F04 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_amygdala)
+summary_amygdala_F04 <- tidy(model_amygdala_F04)              
+summary_amygdala_F04 <- summary_amygdala_F04 %>% mutate(event = "F04")
+summaries_amygdala_face_events <- bind_rows(summaries_amygdala_face_events, summary_amygdala_F04)
+summaries_amygdala_face_events$region <- "amygdala"
+summaries_amygdala_face_events$p.value <- as.numeric(summaries_amygdala_face_events$p.value)
+summaries_amygdala_face_events <- summaries_amygdala_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+## Scene events
+
+### Models with interaction effects
+
+events <- paste0("S", sprintf("%02d", 1:12))  #generates S01, S02, ..., S12
+model_summaries <- list()
+
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_amygdala)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+
+summaries_amygdala_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+
+summaries_amygdala_scene_events$region <- "amygdala"
+summaries_amygdala_scene_events <- summaries_amygdala_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events, repeat models without interaction effects for all events
+
+model_summaries <- list()
+
+for (event in events) {
+  # Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  # Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_amygdala)
+  
+  # Summarise the model
+  summary_tidy <- tidy(model)
+  
+  # Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+
+summaries_amygdala_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+
+summaries_amygdala_scene_events$region <- "amygdala"
+summaries_amygdala_scene_events$p.value <- as.numeric(summaries_amygdala_scene_events$p.value)
+summaries_amygdala_scene_events <- summaries_amygdala_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+```
+
+STS
+
+```{r}
+
+# Read data
+
+eventsmagnitude_data_STS <- subset(eventsmagnitude_data, region == "STS")
+
+## Face events
+
+### Models with interaction effects
+
+events <- paste0("F", sprintf("%02d", 1:12))
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_STS)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_STS_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  # Add the event name to each summary
+}))
+summaries_STS_face_events$region <- "STS"
+summaries_STS_face_events <- summaries_STS_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events but F09, repeat models without interaction effects for all events but F09
+
+events <- c("F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F10", "F11", "F12")
+
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_STS)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_STS_face_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+model_STS_F09 <- lmer(F09 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_STS)
+summary_STS_F09 <- tidy(model_STS_F09)              
+summary_STS_F09 <- summary_STS_F09 %>% mutate(event = "F09")
+summaries_STS_face_events <- bind_rows(summaries_STS_face_events, summary_STS_F09)
+summaries_STS_face_events$region <- "STS"
+summaries_STS_face_events$p.value <- as.numeric(summaries_STS_face_events$p.value)
+summaries_STS_face_events <- summaries_STS_face_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+## Scene events
+
+### Models with interaction effects
+
+events <- paste0("S", sprintf("%02d", 1:12))  #generates S01, S02, ..., S12
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age*hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_STS)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_STS_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+summaries_STS_scene_events$region <- "STS"
+summaries_STS_scene_events <- summaries_STS_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ ""
+  ))
+
+### Interaction effects are non-sig for all events but S02 and S08, repeat models without interaction effects for all events except S02 and S08
+
+events <- c("S01", "S03", "S04", "S05", "S06", "S07", "S09", "S10", "S11", "S12")
+model_summaries <- list()
+for (event in events) {
+  #### Create the formula dynamically
+  formula <- as.formula(paste(event, "~ age + hemisphere + meanFD + (1 | ID)"))
+  
+  #### Fit the model
+  model <- lmer(formula, data = eventsmagnitude_data_STS)
+  
+  #### Summarise the model
+  summary_tidy <- tidy(model)
+  
+  #### Store the summary in the list with the event name as the key
+  model_summaries[[event]] <- summary_tidy
+}
+summaries_STS_scene_events <- do.call(rbind, lapply(names(model_summaries), function(event) {
+  model_summaries[[event]] %>% mutate(event = event)  #add the event name to each summary
+}))
+model_STS_S02 <- lmer(S02 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_STS)
+summary_STS_S02 <- tidy(model_STS_S02)              
+summary_STS_S02 <- summary_STS_S02 %>% mutate(event = "S02")
+model_STS_S08 <- lmer(S08 ~ age*hemisphere + meanFD + (1 | ID), data = eventsmagnitude_data_STS)
+summary_STS_S08 <- tidy(model_STS_S08)              
+summary_STS_S08 <- summary_STS_S08 %>% mutate(event = "S08")
+summaries_STS_scene_events <- bind_rows(summaries_STS_scene_events, summary_STS_S02, summary_STS_S08)
+summaries_STS_scene_events$region <- "STS"
+summaries_STS_scene_events$p.value <- as.numeric(summaries_STS_scene_events$p.value)
+summaries_STS_scene_events <- summaries_STS_scene_events %>%
+  mutate(sig = case_when(
+    p.value < 0.004 ~ "significant after correction",
+    TRUE            ~ ""
+  ))
+
+```
+
+Save results
+
+```{r}
+
+all_summaries <- bind_rows(
+  summaries_FFA_face_events,
+  summaries_FFA_scene_events,
+  summaries_MMPFC_face_events,
+  summaries_MMPFC_scene_events,
+  summaries_amygdala_face_events,
+  summaries_amygdala_scene_events,
+  summaries_STS_face_events,
+  summaries_STS_scene_events
+)
+all_summaries$p.value <- as.numeric(all_summaries$p.value)
+event_order <- c(
+  "F01","F09","F11","F04","F10","F12","F07","F08","F06","F05","F02","F03",
+  "S07","S02","S03","S04","S12","S11","S10","S06","S08","S05","S09","S01"
+)
+
+all_summaries <- all_summaries %>%
+  mutate(
+    across(c(estimate, std.error, statistic, df), ~ round(.x, 2)),
+    p.value = if_else(p.value < 0.001,
+                      format(p.value, scientific = TRUE, digits = 4),
+                      sprintf("%.3f", p.value)),
+    event = factor(event, levels = event_order)
+  ) %>%
+  arrange(region, event)
+
+write.csv(all_summaries, here("results/RQ1", "Eventmagnitude_age.csv"), row.names = FALSE)
+
+```
+
+### Model plots
+
+Timecourses and events
+
+```{r}
+
+#   Data wrangling
+
+TCs_total <- read_csv(here("processed_data", "TCs_total.csv"), col_names=TRUE)
+data_plot <- merge(TCs_total, participants[,c(1,3,4)], by="ID")
+data_plot <- data_plot %>%
+  filter(Child_Adult == "child")
+data_plot$Child_Adult <- NULL
+data_plot <- data_plot %>%
+  group_by(time, AgeGroup) %>%
+  summarise(
+    avg_lamygdala = mean(lamygdala, na.rm = TRUE),
+    avg_ramygdala = mean(ramygdala, na.rm = TRUE),
+    avg_lFFA = mean(lFFA, na.rm = TRUE),
+    avg_rFFA = mean(rFFA, na.rm = TRUE),
+    avg_lMMPFC = mean(lMMPFC, na.rm = TRUE),
+    avg_rMMPFC = mean(rMMPFC, na.rm = TRUE), 
+    avg_lSTS = mean(lSTS, na.rm = TRUE),
+    avg_rSTS = mean(rSTS, na.rm = TRUE), .groups = "drop"
+  )
+
+avg_adult_TCs_trad_fROIs <- read.csv(here("raw_data/timecourses", "TCs_trad_adult_fROIs.csv"), header = TRUE, dec = ".", sep = ",")
+avg_adult_TCs_trad_fROIs <- avg_adult_TCs_trad_fROIs %>%
+  mutate(time = time - 1)
+TCs_amygdala <- read.csv(here("raw_data/timecourses", "TCs_amygdala.csv"), header = TRUE, dec = ".", sep = ",")
+TCs_amygdala$sub <- gsub("[pixar]", "", TCs_amygdala$sub)
+TCs_amygdala$sub <- trimws(TCs_amygdala$sub)
+TCs_amygdala$run <- NULL
+colnames(TCs_amygdala) <- c("time", "ID", "lamygdala", "ramygdala")
+adult_list <- row.names(participants)[which(participants[["Child_Adult"]] == "adult")]
+adult_TCs_amygdala <- TCs_amygdala %>%
+  filter(ID %in% adult_list)
+avg_adult_TCs_amygdala <- adult_TCs_amygdala %>%
+  group_by(time) %>%
+  summarise(
+    avg_lamygdala = mean(lamygdala, na.rm = TRUE),
+    avg_ramygdala = mean(ramygdala, na.rm = TRUE)
+  )
+avg_adult_TCs <- merge(avg_adult_TCs_amygdala, avg_adult_TCs_trad_fROIs, by="time")
+avg_adult_TCs$AgeGroup <- "adult"
+avg_adult_TCs <- avg_adult_TCs[, c("time", "AgeGroup", "avg_lamygdala", "avg_ramygdala", "avg_lFFA", "avg_rFFA", "avg_lMMPFC", "avg_rMMPFC", "avg_lSTS", "avg_rSTS")]
+data_plot <- rbind(data_plot, avg_adult_TCs)
+colnames(data_plot) <- c("time", "AgeGroup", "lamygdala", "ramygdala", "lFFA", "rFFA", "lMMPFC", "rMMPFC", "lSTS", "rSTS")
+
+data_plot <- data_plot %>%
+  pivot_longer(
+    cols = c(lamygdala, ramygdala, lFFA, rFFA, lMMPFC, rMMPFC, lSTS, rSTS),
+    names_to = "Temp",
+    values_to = "value"
+  ) %>%
+  ## Separate the "Temp" column into "Hemisphere" and "Region"
+  mutate(
+    hemisphere = if_else(str_starts(Temp, "l"), "left", "right"),
+    region = case_when(
+      str_detect(Temp, "amygdala") ~ "amygdala",
+      str_detect(Temp, "FFA") ~ "FFA",
+      str_detect(Temp, "MMPFC") ~ "MMPFC",
+      str_detect(Temp, "STS") ~ "STS",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(-Temp)  #drop the temporary column
+
+data_plot_FFA <- subset(data_plot, region == "FFA")
+data_plot_MMPFC <- subset(data_plot, region == "MMPFC")
+data_plot_amygdala <- subset(data_plot, region == "amygdala")
+data_plot_STS <- subset(data_plot, region == "STS")
+
+events_TRs <- read_csv(here("processed_data", "events_TRs.csv"), col_names=TRUE)
+events_TRs <- events_TRs[,c(1:3)]
+custom_colours <- c("#D34835", "#DDA86A", "#83AC66", "#87BACF", "#6989F3", "#652975")
+
+# FFA Timecourses, including events
+
+## Plot
+
+Plot_FFA <- ggplot(data_plot_FFA) +
+  geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
+  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_text(data = data_plot_FFA[data_plot_FFA$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
+            aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
+  facet_wrap(~ hemisphere, scales = "free_y") +
+  theme_classic() +
+  scale_color_manual(values = custom_colours) +
+  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_x_continuous(
+    breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170), 
+    labels = NULL
+  ) +
+  labs(
+    title = "FFA",
+    y = "Response magnitude",
+    color = "Age group"
+  ) +
+  theme(
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.line.y = element_line(linewidth = 0.8, color = "black"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+## Add the shaded rectangles for events
+
+Plot_FFA <- Plot_FFA + 
+  geom_rect(data = events_TRs, 
+            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            alpha = 0.3, color = NA) +
+  scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
+  guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
+
+print(Plot_FFA)
+
+# MMPFC Timecourses, including events
+
+Plot_MMPFC <- ggplot(data_plot_MMPFC) +
+  geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
+  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_text(data = data_plot_MMPFC[data_plot_MMPFC$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
+            aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
+  facet_wrap(~ hemisphere, scales = "free_y") +
+  theme_classic() +
+  scale_color_manual(values = custom_colours) +
+  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_x_continuous(
+    breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
+    labels = NULL
+  ) +
+  labs(
+    title = "MMPFC",
+    y = "Response magnitude",
+    color = "Age group"
+  ) +
+  theme(
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.line.y = element_line(linewidth = 0.8, color = "black"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+## Add the shaded rectangles for events
+
+Plot_MMPFC <- Plot_MMPFC + 
+  geom_rect(data = events_TRs, 
+            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            alpha = 0.3, color = NA) +
+  scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
+  guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
+
+## Get the 10th "faces" event (pink box)
+
+pink_boxes <- events_TRs[events_TRs$trial_type == "faces",]
+tenth_pink_box <- pink_boxes[10,]  #get the 10th pink box
+
+## Adjust the y position for the asterisk to stay within the valid range
+
+Plot_MMPFC <- Plot_MMPFC +
+  geom_text(data = tenth_pink_box, 
+            aes(x = (onset + end) / 2 - 1, y = 1.40, label = "*"),  # Adjust y to fit within plot limits
+            size = 8, color = "black", fontface = "bold", vjust = 0)
+
+print(Plot_MMPFC)
+
+# Amygdala Timecourses, including events
+
+Plot_amygdala <- ggplot(data_plot_amygdala) +
+  geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
+  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_text(data = data_plot_amygdala[data_plot_amygdala$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
+            aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
+  facet_wrap(~ hemisphere, scales = "free_y") +
+  theme_classic() +
+  scale_color_manual(values = custom_colours) +
+  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_x_continuous(
+    breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
+    labels = NULL
+  ) +
+  labs(
+    title = "Amygdala",
+    y = "Response magnitude",
+    color = "Age group"
+  ) +
+  theme(
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.line.y = element_line(linewidth = 0.8, color = "black"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+Plot_amygdala <- Plot_amygdala + 
+  geom_rect(data = events_TRs, 
+            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            alpha = 0.3, color = NA) +
+  scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
+  guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
+
+print(Plot_amygdala)
+
+# STS Timecourses, including events
+
+Plot_STS <- ggplot(data_plot_STS) +
+  geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
+  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_text(data = data_plot_STS[data_plot_STS$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
+            aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
+  facet_wrap(~ hemisphere, scales = "free_y") +
+  theme_classic() +
+  scale_color_manual(values = custom_colours) +
+  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_x_continuous(
+    breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
+    labels = NULL
+  ) +
+  labs(
+    title = "STS",
+    y = "Response magnitude",
+    color = "Age group"
+  ) +
+  theme(
+    strip.text = element_text(size = 16),
+    strip.background = element_blank(),
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.line.y = element_line(linewidth = 0.8, color = "black"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+Plot_STS <- Plot_STS + 
+  geom_rect(data = events_TRs, 
+            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            alpha = 0.3, color = NA) +
+  scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
+  guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
+
+## Get the 10th "faces" event (pink box)
+
+pink_boxes <- events_TRs[events_TRs$trial_type == "faces",]
+fifth_pink_box <- pink_boxes[5,]  #get the 10th pink box
+
+## Adjust the y position for the asterisk to stay within the valid range
+
+Plot_STS <- Plot_STS +
+  geom_text(data = fifth_pink_box, 
+            aes(x = (onset + end) / 2 - 1, y = 1.40, label = "*"),  # Adjust y to fit within plot limits
+            size = 8, color = "black", fontface = "bold", vjust = 0)
+
+print(Plot_STS)
+
+# Save plots
+
+ggsave(here("results/figures", "TCs_FFA.png"), plot = Plot_FFA, width = 15, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "TCs_MMPFC.png"), plot = Plot_MMPFC, width = 15, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "TCs_amygdala.png"), plot = Plot_amygdala, width = 15, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "TCs_STS.png"), plot = Plot_STS, width = 15, height = 5, units = "in", dpi = 300)
+
+```
+
+Age and response magnitude of MMPFC and STS to face events
+
+Histogram
+
+```{r}
+
+# Data wrangling
+
+data_plot <- merge(long_data, participants[,c(1,3)], by="ID")
+data_plot$ID <- as.factor(data_plot$ID)
+data_plot$hemisphere <- as.factor(data_plot$hemisphere)
+data_plot$region <- as.factor(data_plot$region)
+data_plot_MMPFC <- subset(data_plot, region == "MMPFC")
+data_plot_STS <- subset(data_plot, region == "STS")
+
+# Colours
+
+custom_colours <- c("#D34835", "#DDA86A", "#83AC66", "#87BACF", "#6989F3", "#652975")
+
+# Make individual plots for MMPFC and STS and events with significant age associations
+
+## General plotting function
+
+generate_plot <- function(data, feature, subtitle, show_legend = TRUE, y_label = NULL, legend_pos = "bottom") {
+  summary_data <- data %>%
+    filter(!is.na(.data[[feature]]) & !is.na(AgeGroup)) %>%
+    group_by(hemisphere, AgeGroup) %>%
+    summarise(
+      mean_value = mean(.data[[feature]], na.rm = TRUE),
+      se_value   = sd(.data[[feature]], na.rm = TRUE) / sqrt(n()),
+      .groups = "drop"
+    )
+  ggplot(summary_data, aes(x = as.factor(AgeGroup), y = mean_value, fill = as.factor(AgeGroup))) +
+    geom_bar(stat = "identity", position = "stack", width = 1, alpha = 1) +
+    geom_errorbar(aes(ymin = mean_value - se_value, ymax = mean_value + se_value), width = 0) +
+    geom_hline(yintercept = 0, linetype = "solid", size = 1, color = "black") +
+    scale_fill_manual(values = custom_colours) +
+    labs(title = subtitle, x = "Age Group", y = y_label, fill = "Age Group") +
+    facet_wrap(~hemisphere) +
+    coord_cartesian(ylim = c(-1, 1)) +
+    theme_classic() +
+    theme(
+      strip.text      = element_text(size = 14, face = "bold"),
+      strip.background= element_blank(),
+      legend.position = ifelse(show_legend, legend_pos, "right"),
+      legend.text     = element_text(size = 16),
+      legend.title    = element_text(size = 14, face = "bold"),
+      axis.title      = element_text(size = 14, face = "bold"),
+      axis.text       = element_text(size = 12),
+      axis.title.x    = element_blank(),
+      axis.text.x     = element_blank(),
+      axis.ticks.x    = element_blank(),
+      axis.line.x     = element_blank(),
+      plot.title      = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.line.y     = element_line(size = 0.8, color = "black")
+    )
+}
+
+## Generate plots with one reusable function
+
+plot_F05 <- generate_plot(data_plot_MMPFC, "F05", "MMPFC response to F05", show_legend = TRUE, y_label = "Response magnitude")
+plot_F10 <- generate_plot(data_plot_MMPFC, "F10", "STS response to F10", show_legend = TRUE)
+
+## Combine plots with a common centered title and shared legend
+
+final_plot <- (plot_F05 | plot_F10 ) +  
+  plot_layout(ncol = 2, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+
+# Save plot
+
+ggsave(here("results/figures", "Event_age_histogram.png"), plot = final_plot, width = 7, height = 5, units = "in", dpi = 300)
+
+```
+
+
+## Section III: Age effects on functional connectivity (Fx) between regions
+
+### Read data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names=TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]","", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+# Motion
+
+motion <- read_tsv(here("raw_data/motion", "outlier_info.tsv"), col_names=TRUE)
+colnames(motion)[which(names(motion) == "subject")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+motion$ID <- gsub("[sub-pixar-]","", motion$ID)
+motion$ID <- trimws(motion$ID)
+
+# Child fMRI variables
+
+child_MRIvariables <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+
+# Complete dataset
+
+child_MRIvariables <- child_MRIvariables[,c(1, 202:229)]
+child_MRIvariables <- merge(child_MRIvariables, participants[,c(1:2)], by="ID")
+child_MRIvariables <- merge(child_MRIvariables, motion[,c(4,6)], by="ID")
+child_MRIvariables <- child_MRIvariables %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+child_MRIvariables[, c("Age", "MeanFD")] <- scale(child_MRIvariables[, c("Age", "MeanFD")])
+
+```
+
+### Plot correlations between regions by age
+
+```{r}
+
+# Read data
+
+TCs_total <- read_csv(here("processed_data", "TCs_total.csv"), col_names = TRUE)
+TCs_total$time <- as.numeric(as.character(TCs_total$time))
+data_plot <- merge(TCs_total, participants[, c("ID", "AgeGroup")], by = "ID")
+data_plot <- data_plot %>%
+  filter(AgeGroup != "Adult")
+
+# Rename timecourse columns
+
+data_plot <- data_plot %>%
+  rename_with(~ c("left amygdala", "right amygdala", "left FFA", "right FFA", "left MMPFC", "right MMPFC", "left STS", "right STS"),
+              .cols = c("lamygdala", "ramygdala", "lFFA", "rFFA", "lMMPFC", "rMMPFC", "lSTS", "rSTS"))
+
+# Define regions of interest
+
+regions <- c("left amygdala", "right amygdala", "left FFA", "right FFA", "left MMPFC", "right MMPFC", "left STS", "right STS")
+
+# Calculate correlation matrices per AgeGroup
+
+age_groups <- unique(data_plot$AgeGroup)
+
+correlation_by_agegroup <- map_df(age_groups, function(age) {
+  group_data <- data_plot[data_plot$AgeGroup == age, ]
+
+  seg1 <- group_data[group_data$time >= 1 & group_data$time <= 82, ]
+  seg2 <- group_data[group_data$time >= 87 & group_data$time <= 168, ]
+
+  mat1 <- cor(seg1[, regions], use = "pairwise.complete.obs")
+  mat2 <- cor(seg2[, regions], use = "pairwise.complete.obs")
+  mat_avg <- (mat1 + mat2) / 2
+
+  # Replace amygdala correlation with full-time tc version
+  amyg_cor <- cor(group_data[, c("left amygdala", "right amygdala")], use = "pairwise.complete.obs")[1, 2]
+  mat_avg["left amygdala", "right amygdala"] <- amyg_cor
+  mat_avg["right amygdala", "left amygdala"] <- amyg_cor
+
+  tibble(AgeGroup = age, cor_matrix = list(mat_avg))
+})
+
+# Convert matrices to long format for ggplot2
+
+data_plot <- correlation_by_agegroup %>%
+  mutate(cor_matrix = map(cor_matrix, ~ melt(.x, varnames = c("Region1", "Region2")))) %>%
+  unnest(cor_matrix)
+
+data_plot <- data_plot %>%
+  filter(Region1 != Region2)
+
+# Order factor levels for consistent axis order
+
+region_levels <- regions
+data_plot$Region1 <- factor(data_plot$Region1, levels = region_levels)
+data_plot$Region2 <- factor(data_plot$Region2, levels = region_levels)
+
+# Identify upper triangle entries (for displaying numbers only)
+
+data_plot <- data_plot %>%
+  mutate(is_upper = as.numeric(Region1) < as.numeric(Region2))
+
+# Plot heatmap
+
+heatmap_plot <- ggplot(data_plot, aes(x = Region1, y = Region2, fill = value)) +
+  geom_tile() +
+  geom_tile(data = data_plot %>% filter(is_upper), fill = "white", color = NA) +
+  geom_text(data = data_plot %>% filter(is_upper), 
+    aes(label = sprintf("%.2f", value)), size = 2.8) + 
+  facet_wrap(~ AgeGroup, nrow=1) + 
+  scale_fill_gradient2(
+    low = "#D34835", high = "#87BACF", mid = "white", 
+    midpoint = 0, limit = c(-0.80, 0.80), 
+    name = "Correlation",
+    breaks = c(-0.80, -0.40, 0, 0.40, 0.80),
+    labels = c("-0.80", "-0.40", "0.00", "0.40", "0.80")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "",
+    x = "",
+    y = ""
+  ) +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold", color = "darkgrey", size = 13),
+    axis.text.y = element_text(face = "bold", color = "darkgrey", size = 13),
+    strip.text = element_text(size = 14),
+    plot.title = element_text(hjust = 0.5, size = 19),
+    plot.title.position = "plot"
+  )
+
+# Display the plot
+
+print(heatmap_plot)
+
+# Save plot
+
+ggsave(here("results/figures", "Fx_AgeGroup.png"), plot = heatmap_plot, width = 13, height = 4, units = "in", dpi = 300)
+
+```
+
+### Descriptive statistics: Mean FFA Fx values with ROIs (non-preregistered)
+
+```{r}
+
+# Read data
+
+TCs_total <- read_csv(here("processed_data", "TCs_total.csv"), col_names = TRUE)
+TCs_total$time <- as.numeric(as.character(TCs_total$time))
+data_plot <- merge(TCs_total, participants[, c("ID", "AgeGroup")], by = "ID")
+data_plot <- data_plot %>%
+  filter(AgeGroup != "Adult")
+
+# Rename ROI columns
+
+data_plot <- data_plot %>%
+  rename_with(
+    ~ c("left amygdala", "right amygdala",
+        "left FFA", "right FFA",
+        "left MMPFC", "right MMPFC",
+        "left STS", "right STS"),
+    .cols = c("lamygdala", "ramygdala",
+              "lFFA", "rFFA",
+              "lMMPFC", "rMMPFC",
+              "lSTS", "rSTS")
+  )
+
+# Define ROIs
+
+regions <- c("left amygdala", "right amygdala",
+             "left FFA", "right FFA",
+             "left MMPFC", "right MMPFC",
+             "left STS", "right STS")
+
+# Compute subject-level correlation matrices
+
+cor_subject <- data_plot %>%
+  group_by(ID) %>%
+  group_map(~ {
+    
+    seg1 <- .x %>% filter(time >= 1 & time <= 82)
+    seg2 <- .x %>% filter(time >= 87 & time <= 168)
+    
+    mat1 <- cor(seg1[, regions], use = "pairwise.complete.obs")
+    mat2 <- cor(seg2[, regions], use = "pairwise.complete.obs")
+    mat_avg <- (mat1 + mat2) / 2
+    
+    # Replace amygdala correlation with full-time tc version
+    amyg_cor <- cor(.x[, c("left amygdala", "right amygdala")], use = "pairwise.complete.obs")[1,2]
+    mat_avg["left amygdala", "right amygdala"] <- amyg_cor
+    mat_avg["right amygdala", "left amygdala"] <- amyg_cor
+    
+    mat_avg
+  })
+
+# Convert all matrices to long format
+
+cor_long <- map_dfr(cor_subject, ~ as.data.frame(as.table(.x)) %>%
+                       setNames(c("Region1", "Region2", "r")))
+
+# Exclude diagonal (self-correlations)
+
+cor_long <- cor_long %>%
+  filter(Region1 != Region2)
+
+# Filter for left/right FFA and compute summary + t-tests
+
+cor_summary_with_t <- cor_long %>%
+  filter(Region1 %in% c("right FFA", "left FFA")) %>%
+  group_by(Region1, Region2) %>%
+  summarise(
+    mean_r = mean(r, na.rm = TRUE),
+    sd_r   = sd(r, na.rm = TRUE),
+    n      = n(),
+    t_test = list(t.test(r, mu = 0, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    mean_sd = sprintf("%.2f (%.2f)", mean_r, sd_r),
+    t_test  = map(t_test, broom::tidy)
+  ) %>%
+  unnest(t_test) %>%
+  mutate(
+    p.value = ifelse(p.value < 0.001,
+                     format(p.value, scientific = TRUE, digits = 4),
+                     sprintf("%.3f", p.value)),
+    t_stat  = sprintf("%.2f", statistic),
+    df      = sprintf("%.0f", parameter)
+  ) %>%
+  select(Region1, Region2, mean_sd, t_stat, df, p.value) %>%
+  arrange(Region1, Region2)
+
+# View final table
+
+cor_summary_with_t
+
+# Save the table
+
+write_csv(cor_summary_with_t, here("results/RQ1", "FFA_fx_descriptive_table.csv"))
+
+```
+
+
+### Models (models including STS were not pre-registered)
+
+#### Primary models 
+
+Linear models
+
+```{r}
+
+model_rlFFA <- lm(fx_rFFA_lFFA ~ Age + MeanFD, data = child_MRIvariables)
+summary(model_rlFFA)
+
+```
+
+Linear-mixed-effect models
+
+```{r}
+
+# Make long data for rest of the models: 
+
+long_data <- child_MRIvariables %>%
+  pivot_longer(
+    cols = starts_with("fx_"),
+    names_to = c("Region1", "Region2"),
+    names_pattern = "fx_(.+)_(.+)",
+    values_to = "zscored_value"
+  )
+long_data <- long_data %>%
+  mutate(
+    Hemisphere = ifelse(grepl("^r", Region2), "right", "left"),
+    Region2 = sub("^[rl]", "", Region2)
+  )
+
+# Models with interaction effects 
+
+## rFFA and r/lMMPFC
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "MMPFC")
+model_rFFA_rlMMPFC <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlMMPFC) 
+
+## rFFA and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "amygdala")
+model_rFFA_rlamygdala <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlamygdala) 
+
+## rFFA and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "STS")
+model_rFFA_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlSTS) 
+
+# No interaction effects are significant except for rFFA and r/lMMPFC, so models are run without interaction effects except for rFFA and r/lMMPFC
+
+## rFFA and r/lMMPFC
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "MMPFC")
+model_rFFA_rlMMPFC <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlMMPFC)
+
+## rFFA and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "amygdala")
+model_rFFA_rlamygdala <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlamygdala)
+
+## rFFA and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "rFFA" & Region2 == "STS")
+model_rFFA_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rFFA_rlSTS)
+
+```
+
+#### Secondary models 
+
+Linear models
+
+```{r}
+
+# rlMMPFC
+
+model_rlMMPFC <- lm(fx_lMMPFC_rMMPFC ~ Age + MeanFD, data = child_MRIvariables)
+summary(model_rlMMPFC)
+
+# rlamygdala
+
+model_rlamygdala <- lm(fx_lamygdala_ramygdala ~ Age + MeanFD, data = child_MRIvariables)
+summary(model_rlamygdala)
+
+# rlSTS
+
+model_rlSTS <- lm(fx_lSTS_rSTS ~ Age + MeanFD, data = child_MRIvariables)
+summary(model_rlSTS)
+
+```
+
+Linear-mixed-effect models
+
+```{r}
+
+# Models with interaction effects 
+
+## lFFA and r/lMMPFC
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "MMPFC")
+model_lFFA_rlMMPFC <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlMMPFC)
+
+## lFFA and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "amygdala")
+model_lFFA_rlamygdala <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlamygdala)
+
+## lFFA and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "STS")
+model_lFFA_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlSTS) 
+
+## rMMPFC and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "rMMPFC" & Region2 == "amygdala")
+model_rMMPFC_rlamygdala <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rMMPFC_rlamygdala)
+
+## rMMPFC and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "rMMPFC" & Region2 == "STS")
+model_rMMPFC_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rMMPFC_rlSTS)
+
+## lMMPFC and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "lMMPFC" & Region2 == "amygdala")
+model_lMMPFC_rlamygdala <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lMMPFC_rlamygdala)
+
+## lMMPFC and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lMMPFC" & Region2 == "STS")
+model_lMMPFC_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lMMPFC_rlSTS)
+
+## ramygdala and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "ramygdala" & Region2 == "STS")
+model_ramygdala_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_ramygdala_rlSTS)
+
+## lamygdala and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lamygdala" & Region2 == "STS")
+model_lamygdala_rlSTS <- lmer(
+  zscored_value ~ Age*Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lamygdala_rlSTS)
+
+# No interaction effects are significant, so models are run without interaction effects 
+
+## lFFA and r/lMMPFC
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "MMPFC")
+model_lFFA_rlMMPFC <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlMMPFC)
+
+## lFFA and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "amygdala")
+model_lFFA_rlamygdala <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlamygdala)
+
+## lFFA and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lFFA" & Region2 == "STS")
+model_lFFA_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lFFA_rlSTS)
+
+## rMMPFC and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "rMMPFC" & Region2 == "amygdala")
+model_rMMPFC_rlamygdala <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rMMPFC_rlamygdala)
+
+## rMMPFC and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "rMMPFC" & Region2 == "STS")
+model_rMMPFC_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_rMMPFC_rlSTS)
+
+## lMMPFC and r/lamygdala
+
+model_data <- long_data %>%
+  filter(Region1 == "lMMPFC" & Region2 == "amygdala")
+model_lMMPFC_rlamygdala <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lMMPFC_rlamygdala)
+
+## lMMPFC and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lMMPFC" & Region2 == "STS")
+model_lMMPFC_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lMMPFC_rlSTS)
+
+## ramygdala and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "ramygdala" & Region2 == "STS")
+model_ramygdala_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_ramygdala_rlSTS)
+
+## lamygdala and r/lSTS
+
+model_data <- long_data %>%
+  filter(Region1 == "lamygdala" & Region2 == "STS")
+model_lamygdala_rlSTS <- lmer(
+  zscored_value ~ Age + Hemisphere + MeanFD + (1 | ID),
+  data = model_data
+)
+summary(model_lamygdala_rlSTS)
+
+```
+
+Save models
+
+```{r}
+
+# Create tidy summaries of all models
+
+## Primary models
+
+model_rlFFA_summary <- tidy(model_rlFFA) %>%
+  mutate(Model = "rlFFA", Label = "Primary")
+
+model_rFFA_rlMMPFC_summary <- tidy(model_rFFA_rlMMPFC, effects = "fixed") %>%
+  mutate(Model = "rFFA_rlMMPFC", Label = "Primary")
+
+model_rFFA_rlamygdala_summary <- tidy(model_rFFA_rlamygdala, effects = "fixed") %>%
+  mutate(Model = "rFFA_rlamygdala", Label = "Primary")
+
+model_rFFA_rlSTS_summary <- tidy(model_rFFA_rlSTS, effects = "fixed") %>%
+  mutate(Model = "rFFA_rlSTS", Label = "Primary")
+
+## Secondary models
+
+model_lFFA_rlMMPFC_summary <- tidy(model_lFFA_rlMMPFC, effects = "fixed") %>%
+  mutate(Model = "lFFA_rlMMPFC", Label = "Secondary")
+
+model_lFFA_rlamygdala_summary <- tidy(model_lFFA_rlamygdala, effects = "fixed") %>%
+  mutate(Model = "lFFA_rlamygdala", Label = "Secondary")
+
+model_lFFA_rlSTS_summary <- tidy(model_lFFA_rlSTS, effects = "fixed") %>%
+  mutate(Model = "lFFA_rlSTS", Label = "Secondary")
+
+model_rlMMPFC_summary <- tidy(model_rlMMPFC) %>%
+  mutate(Model = "rlMMPFC", Label = "Secondary")
+
+model_rMMPFC_rlamygdala_summary <- tidy(model_rMMPFC_rlamygdala, effects = "fixed") %>%
+  mutate(Model = "rMMPFC_rlamygdala", Label = "Secondary")
+
+model_rMMPFC_rlSTS_summary <- tidy(model_rMMPFC_rlSTS, effects = "fixed") %>%
+  mutate(Model = "rMMPFC_rlSTS", Label = "Secondary")
+
+model_lMMPFC_rlamygdala_summary <- tidy(model_lMMPFC_rlamygdala, effects = "fixed") %>%
+  mutate(Model = "lMMPFC_rlamygdala", Label = "Secondary")
+
+model_lMMPFC_rlSTS_summary <- tidy(model_lMMPFC_rlSTS, effects = "fixed") %>%
+  mutate(Model = "lMMPFC_rlSTS", Label = "Secondary")
+
+model_rlamygdala_summary <- tidy(model_rlamygdala, effects = "fixed") %>%
+  mutate(Model = "rlamygdala", Label = "Secondary")
+
+model_ramygdala_rlSTS_summary <- tidy(model_ramygdala_rlSTS, effects = "fixed") %>%
+  mutate(Model = "ramygdala_rlSTS", Label = "Secondary")
+
+model_lamygdala_rlSTS_summary <- tidy(model_lamygdala_rlSTS, effects = "fixed") %>%
+  mutate(Model = "lamygdala_rlSTS", Label = "Secondary")
+
+model_rlSTS_summary <- tidy(model_rlSTS, effects = "fixed") %>%
+  mutate(Model = "rlSTS", Label = "Secondary")
+
+# Combine all summaries into one data frame
+
+all_model_summaries <- bind_rows(
+  model_rlFFA_summary,
+  model_rFFA_rlMMPFC_summary,
+  model_rFFA_rlamygdala_summary,
+  model_rFFA_rlSTS_summary,
+  model_lFFA_rlMMPFC_summary,
+  model_lFFA_rlamygdala_summary,
+  model_lFFA_rlSTS_summary,
+  model_rlMMPFC_summary,
+  model_lMMPFC_rlamygdala_summary,
+  model_lMMPFC_rlSTS_summary,
+  model_rMMPFC_rlamygdala_summary,
+  model_rMMPFC_rlSTS_summary,
+  model_rlamygdala_summary,
+  model_lamygdala_rlSTS_summary,
+  model_ramygdala_rlSTS_summary,
+  model_rlSTS_summary
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    ))
+
+# Save the combined summaries to a CSV file
+
+write.csv(all_model_summaries, here("results/RQ1", "Fx_age.csv"), row.names = FALSE)
+
+```
+
+### Model plots
+
+```{r}
+
+# Data wrangling
+
+data_plot <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+data_plot <- data_plot[,c(1, 202:229)]
+data_plot <- merge(data_plot, participants[,c(1:2)], by="ID")
+data_plot <- merge(data_plot, motion[,c(4,6)], by="ID")
+data_plot <- data_plot %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+data_plot <- data_plot %>%
+  pivot_longer(
+    cols = starts_with("fx_"),
+    names_to = c("Region1", "Region2"),
+    names_pattern = "fx_(.+)_(.+)",
+    values_to = "zscored_value"
+  )
+data_plot <- data_plot %>%
+  mutate(
+    Hemisphere = ifelse(grepl("^r", Region2), "right", "left"),
+    Region2 = sub("^[rl]", "", Region2)
+  )
+data_plot_rFFA_MMPFC <- data_plot %>%
+  filter(Region2 == "MMPFC", Region1 == "rFFA")
+data_plot_lFFA_MMPFC <- data_plot %>%
+  filter(Region2 == "MMPFC", Region1 == "lFFA")
+data_plot_rFFA_amygdala <- data_plot %>%
+  filter(Region2 == "amygdala", Region1 == "rFFA")
+data_plot_lFFA_amygdala <- data_plot %>%
+  filter(Region2 == "amygdala", Region1 == "lFFA")
+data_plot_rFFA_STS <- data_plot %>%
+  filter(Region2 == "STS", Region1 == "rFFA")
+data_plot_lFFA_STS <- data_plot %>%
+  filter(Region2 == "STS", Region1 == "lFFA")
+
+# Colours
+
+custom_colours_amygdala <- c("#E1AA9F", "#D34835")
+custom_colours_MMPFC <- c("#87BACF", "#578CAD")
+custom_colours_FFA <- c("#C39EDA", "#652975")
+custom_colours_STS <- c("#FFF865", "#FFCE1B")
+
+
+# Define a base theme to avoid repetition
+
+base_theme <- theme_minimal() +
+  theme(
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12, face = "bold")
+  )
+
+# Function to create ggplots efficiently
+
+create_plot <- function(data, color_values, legend_title, x_label = "", y_label = "", legend_position = "none", remove_y_axis_labels = FALSE) {
+  plot <- ggplot(data, aes(x = Age, y = zscored_value, color = Hemisphere)) +
+    geom_point(alpha = 0.8, size = 2.8, shape = 19) +  
+    geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +  
+    scale_color_manual(values = color_values) +  
+    labs(x = x_label, y = y_label, color = legend_title) +
+    base_theme +
+    theme(legend.position = legend_position) +
+    coord_cartesian(ylim = c(-4, 3)) + 
+    scale_x_continuous(breaks = c(3, 6, 9, 12))
+  
+  if (remove_y_axis_labels) {
+    plot <- plot + theme(
+      axis.title.y = element_blank(),
+      axis.text.y = element_blank()
+    )
+  }
+
+  return(plot)
+}
+
+# Create all plots using the function
+
+plot_lFFA_MMPFC <- create_plot(data_plot_lFFA_MMPFC, custom_colours_MMPFC, "MMPFC Hemisphere", "", "Functional connectivity between\n left FFA and region")
+plot_lFFA_amygdala <- create_plot(data_plot_lFFA_amygdala, custom_colours_amygdala, "Amygdala Hemisphere", "Age", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_lFFA_STS <- create_plot(data_plot_lFFA_STS, custom_colours_STS, "STS Hemisphere", "", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_rFFA_MMPFC <- create_plot(data_plot_rFFA_MMPFC, custom_colours_MMPFC, "MMPFC Hemisphere", "", "Functional connectivity between\n right FFA and region", legend_position = "bottom") +
+  annotate(
+    "text",
+    x = Inf, y = -Inf,                        # bottom right corner
+    label = "Age x Hemisphere (right) effect: \nβ(SE)=0.16(0.07), p=0.016",    # your annotation
+    hjust = 1.05,      # slightly >1 for proper right alignment
+    vjust = -0.5,      # nudges text up from bottom
+    size = 4,
+    color = "black"
+)
+plot_rFFA_amygdala <- create_plot(data_plot_rFFA_amygdala, custom_colours_amygdala, "Amygdala Hemisphere", "Age", remove_y_axis_labels = TRUE)
+plot_rFFA_STS <- create_plot(data_plot_rFFA_STS, custom_colours_STS, "STS Hemisphere", "", remove_y_axis_labels = TRUE)
+
+# Combine plots into a single row
+
+fx_rFFA_age <- (
+  plot_rFFA_MMPFC | plot_rFFA_amygdala | plot_rFFA_STS
+) +
+  plot_layout(
+    ncol = 3, 
+    widths = rep(1, 3),
+    guides = "collect"
+  ) +
+  plot_annotation(
+    title = "Functional Connectivity Across Age",
+    theme = theme(
+      plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+    )
+  ) &
+  theme(legend.position = "bottom")
+fx_rFFA_age
+
+fx_lFFA_age <- (
+  plot_lFFA_MMPFC | plot_lFFA_amygdala | plot_lFFA_STS ) +
+  plot_layout(
+    ncol = 3, 
+    widths = rep(1, 3),
+    guides = "collect"
+  ) +
+  plot_annotation(
+    title = "Functional Connectivity Across Age",
+    theme = theme(
+      plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+    )
+  ) &
+  theme(legend.position = "bottom")
+fx_lFFA_age
+
+# Save plots
+
+ggsave(here("results/figures", "Fx_rFFA_age.png"), plot = fx_rFFA_age, width = 10, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "Fx_lFFA_age.png"), plot = fx_lFFA_age, width = 10, height = 5, units = "in", dpi = 300)
+
+```
+
+
+## Section IV: Age effects on lateralisation of face response (non-preregistered)
+
+### Descriptive statistics: Mean LI values
+
+```{r}
+
+# Read data
+
+child_LI <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+child_LI <- child_LI[,c(1, 230:231)]
+
+# Define variables to analyse
+
+li_columns <- c("lateralisation_index_0.05", "lateralisation_index_0.1")
+
+# Compute sunnary + t-tests
+
+li_summary <- li_columns %>%
+  lapply(function(col_name) {
+    values <- child_LI[[col_name]]
+    
+    # Compute mean and SD
+    mean_val <- mean(values, na.rm = TRUE)
+    sd_val   <- sd(values, na.rm = TRUE)
+    
+    # One-sample t-test against 0
+    t_test <- t.test(values, mu = 0, na.rm = TRUE)
+    
+    # Format p-value
+    p_val <- ifelse(t_test$p.value < 0.001,
+                    format(t_test$p.value, scientific = TRUE, digits = 3),
+                    sprintf("%.3f", t_test$p.value))
+    
+    # Create output row
+    tibble(
+      Measure   = col_name,
+      mean_sd   = sprintf("%.2f (%.2f)", mean_val, sd_val),
+      t_stat    = sprintf("%.2f", t_test$statistic),
+      df        = sprintf("%.0f", t_test$parameter),
+      p_value   = p_val
+    )
+  }) %>%
+  bind_rows()  # Combine into a single table
+
+# View final table
+
+li_summary
+
+# Save the table
+
+write_csv(li_summary, here("results/RQ1", "LI_descriptive_table.csv"))
+
+```
+
+### Age effects on lateralisation of face response 
+
+#### Read data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names=TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]","", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+# Motion
+
+motion <- read_tsv(here("raw_data/motion", "outlier_info.tsv"), col_names=TRUE)
+colnames(motion)[which(names(motion) == "subject")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+motion$ID <- gsub("[sub-pixar-]","", motion$ID)
+motion$ID <- trimws(motion$ID)
+
+# Child fMRI variables
+
+child_LI <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+
+# Complete dataset
+
+child_LI <- child_LI[,c(1, 230:231)]
+child_LI <- merge(child_LI, participants[,c(1:2)], by="ID")
+child_LI <- merge(child_LI, motion[,c(4,6)], by="ID")
+child_LI <- child_LI %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+child_LI[, c("lateralisation_index_0.05","lateralisation_index_0.1", "Age", "MeanFD")] <- scale(child_LI[, c("lateralisation_index_0.05","lateralisation_index_0.1", "Age", "MeanFD")])
+
+```
+
+#### Models
+
+##### Threshold 0.05
+
+```{r}
+
+model_LI_0.05_age <- lm(lateralisation_index_0.05 ~ Age + MeanFD, data = child_LI)
+summary_LI_0.05_age <- tidy(model_LI_0.05_age)
+
+```
+
+##### Threshold 0.1
+
+```{r}
+
+model_LI_0.1_age <- lm(lateralisation_index_0.1 ~ Age + MeanFD, data = child_LI)
+summary_LI_0.1_age <- tidy(model_LI_0.1_age)
+
+```
+
+##### Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.05_age %>% mutate(threshold = "0.05"),
+  summary_LI_0.1_age %>% mutate(threshold = "0.1")
+) %>%
+  mutate(
+    p.value    = as.numeric(p.value),                                   # ensure numeric
+    estimate   = round(estimate, 2),
+    std.error  = round(std.error, 2),
+    statistic  = round(statistic, 2),
+    p.value    = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ1", "LI_age.csv"), row.names = FALSE)
+
+```
+
+#### Model plots
+
+LI and age
+
+```{r}
+
+# Read data
+
+child_LI <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+child_LI <- child_LI[,c(1, 230:231)]
+child_LI <- merge(child_LI, participants[,c(1:2)], by="ID")
+child_LI <- merge(child_LI, motion[,c(4,6)], by="ID")
+child_LI <- child_LI %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+
+# LI of children at threshold p<0.05
+
+## Plot
+LI_age_children <- ggplot(
+  child_LI,
+  aes(x = Age, y = lateralisation_index_0.05)
+) +
+  geom_point(color = "#9463A7", alpha = 0.8, size = 2.9, shape = 19) +
+  geom_smooth(method = "lm", se = FALSE, color = "#9463A7", linewidth = 2) +
+  labs(
+    title = "Lateralisation Index of FFA Across Age",
+    x = "Age",
+    y = "Lateralisation Index (p<0.05)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title   = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.text    = element_text(size = 12)
+  )
+
+ggsave(here("results/figures", "LI_0.05_age.png"), plot = LI_age_children, width = 5, height = 5, units = "in", dpi = 300)
+
+# LI of children at threshold p<0.01
+
+LI_age_children <- ggplot(
+  child_LI,
+  aes(x = Age, y = lateralisation_index_0.1)
+) +
+  geom_point(color = "#9463A7", alpha = 0.8, size = 2.9, shape = 19) +
+  geom_smooth(method = "lm", se = FALSE, color = "#9463A7", linewidth = 2) +
+  labs(
+    title = "Lateralisation Index of FFA Across Age",
+    x = "Age",
+    y = "Lateralisation Index (p<0.10)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title   = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.text    = element_text(size = 12)
+  )
+
+ggsave(here("results/figures", "LI_0.1_age.png"), plot = LI_age_children, width = 5, height = 5, units = "in", dpi = 300)
+
+```
+
+
+```{r}
+
+markdownToHTML("FRIC_DevelopmentalChange.Rmd",output ="FRIC_DevelopmentalChange.html")
+
+```
+

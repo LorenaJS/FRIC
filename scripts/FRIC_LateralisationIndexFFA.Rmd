@@ -1,0 +1,1808 @@
+---
+title: "FRIC_LateralisationIndexFFA"
+author: "LJS"
+date: "2025-01-17"
+output: html_document
+---
+
+# Libraries 
+
+```{r setup, include=FALSE}
+
+library("rlang") #toolbox
+library("readr") #toolbox
+library("dplyr") #data manipulation
+library("here") #toolbox
+library("tidyverse") #data manipulation
+library("ggpubr") #plotting
+library("tidytext") #data manipulation
+library("knitr") #rmarkdown
+library("htmltools") #rmarkdown
+library("markdown") #rmarkdown
+library("httpuv") #rmarkdown
+library("NCmisc") #toolbox
+library("stringr") #data manipulation
+library("reshape") #data manipulation
+library("lme4") #regression models
+library("lmerTest") #regression models
+library("broom.mixed") #save regression results
+library("car") #VIF
+library("VIM") #visualise missing data
+library("reshape2") # For reshaping data
+library("patchwork") # For combining multiple plots (if needed)
+library("broom") #tidying model summaries
+
+```
+
+
+# Face Responses in Childhood (FRIC) project
+
+This script tests if the FFA lateralisation index correlates with functional connectivity to or functional maturity of MMPFC, STS and amygdala.
+
+Structure:
+- Section I: Lateralised connectivity to the MMPFC or amygdala drives lateralisation of FFA response
+- Section II: Functional maturation of MMPFC/amygdala drives lateralisation of FFA response
+- Section III: Relationship between lateralisation of FFA response and functional maturity of FFA.
+
+
+## Section I: Lateralised connectivity to the MMPFC or amygdala drives lateralisation of FFA response
+
+### Read data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names=TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]","", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+# Motion
+
+motion <- read_tsv(here("raw_data/motion", "outlier_info.tsv"), col_names=TRUE)
+colnames(motion)[which(names(motion) == "subject")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+motion$ID <- gsub("[sub-pixar-]","", motion$ID)
+motion$ID <- trimws(motion$ID)
+
+# Child fMRI variables
+
+child_LI <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+
+# Complete dataset
+
+child_LI <- child_LI[,c(1:9, 202:231)]
+child_LI <- merge(child_LI, participants[,c(1:2)], by="ID")
+child_LI <- merge(child_LI, motion[,c(4,6)], by="ID")
+child_LI <- child_LI %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+child_LI[, c("lateralisation_index_0.05","lateralisation_index_0.1", "Age", "MeanFD")] <- scale(child_LI[, c("lateralisation_index_0.05","lateralisation_index_0.1", "Age", "MeanFD")])
+
+```
+
+### Threshold p<0.05 (non-preregistered threshold)
+
+Primary models
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_rFFA_ramygdala,
+    fx_rFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_rFFA_rMMPFC,
+    fx_rFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_ramygdala, fx_rFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_rFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_ramygdala" ~ "Right",
+      region == "fx_rFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fx_rFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_rMMPFC, fx_rFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_rFFA_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rMMPFC" ~ "Right",
+      region == "fx_rFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fx_rFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fx_rFFA_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models
+
+model_LI_rFFA <- lmer(lateralisation_index_0.05 ~ fx_rFFA_rlMMPFC*Hemisphere*Age + fx_rFFA_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_rFFA)
+
+```
+
+Secondary models
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_lFFA_ramygdala,
+    fx_lFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_lFFA_rMMPFC,
+    fx_lFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_ramygdala, fx_lFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_lFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_ramygdala" ~ "Right",
+      region == "fx_lFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fx_lFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_rMMPFC, fx_lFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_lFFA_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rMMPFC" ~ "Right",
+      region == "fx_lFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fx_lFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fx_lFFA_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models
+
+model_LI_lFFA_fx <- lmer(lateralisation_index_0.05 ~ fx_lFFA_rlMMPFC*Hemisphere*Age + fx_lFFA_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_lFFA_fx)
+
+```
+
+### Threshold p<0.10 (non-preregistered threshold)
+
+Primary models 
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_rFFA_ramygdala,
+    fx_rFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_rFFA_rMMPFC,
+    fx_rFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_ramygdala, fx_rFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_rFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_ramygdala" ~ "Right",
+      region == "fx_rFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fx_rFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_rMMPFC, fx_rFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_rFFA_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rMMPFC" ~ "Right",
+      region == "fx_rFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fx_rFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fx_rFFA_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models
+
+model_LI_rFFA <- lmer(lateralisation_index_0.1 ~ fx_rFFA_rlMMPFC*Hemisphere*Age + fx_rFFA_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_rFFA)
+
+```
+
+Secondary models
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_lFFA_ramygdala,
+    fx_lFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_lFFA_rMMPFC,
+    fx_lFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_ramygdala, fx_lFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_lFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_ramygdala" ~ "Right",
+      region == "fx_lFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fx_lFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_rMMPFC, fx_lFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_lFFA_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rMMPFC" ~ "Right",
+      region == "fx_lFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fx_lFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fx_lFFA_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models
+
+model_LI_lFFA_fx <- lmer(lateralisation_index_0.1 ~ fx_lFFA_rlMMPFC*Hemisphere*Age + fx_lFFA_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_lFFA_fx)
+
+```
+
+Our preregistered linear mixed-effects models did not converge, likely due to the repeated-measures factor being assigned to the independent variable instead of the dependent variable. To test the same associations, we instead reversed the independent and dependent variables and ran separate linear mixed-effects models for each ROI pair.
+
+### Alternative linear mixed-effects models for threshold p<0.05 (non-preregistered)
+
+Primary models
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_rFFA_ramygdala,
+    fx_rFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_rFFA_rMMPFC,
+    fx_rFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_rFFA_rSTS,
+    fx_rFFA_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_ramygdala, fx_rFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_rFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_ramygdala" ~ "Right",
+      region == "fx_rFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_rFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fx_rFFA_rMMPFC, fx_rFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_rFFA_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rMMPFC" ~ "Right",
+      region == "fx_rFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_rFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fx_rFFA_rSTS, fx_rFFA_lSTS),
+    names_to = "region",
+    values_to = "fx_rFFA_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rSTS" ~ "Right",
+      region == "fx_rFFA_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_rFFA_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.05_rFFA_MMPFC_fx <-lmer(fx_rFFA_rlMMPFC ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.05_rFFA_MMPFC_fx)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_rFFA_MMPFC_fx <- lmer(fx_rFFA_rlMMPFC ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.05_rFFA_MMPFC_fx <- tidy(model_LI_0.05_rFFA_MMPFC_fx)
+summary_LI_0.05_rFFA_MMPFC_fx
+
+## Amygdala
+
+model_LI_0.05_rFFA_amygdala_fx <- lmer(fx_rFFA_rlamygdala ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.05_rFFA_amygdala_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.05_rFFA_amygdala_fx <- lmer(fx_rFFA_rlamygdala ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.05_rFFA_amygdala_fx <- tidy(model_LI_0.05_rFFA_amygdala_fx)
+summary_LI_0.05_rFFA_amygdala_fx
+
+## STS
+
+model_LI_0.05_rFFA_STS_fx <- lmer(fx_rFFA_rlSTS ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.05_rFFA_STS_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.05_rFFA_STS_fx <- lmer(fx_rFFA_rlSTS ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.05_rFFA_STS_fx <- tidy(model_LI_0.05_rFFA_STS_fx)
+summary_LI_0.05_rFFA_STS_fx
+
+```
+
+Secondary models 
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_lFFA_ramygdala,
+    fx_lFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_lFFA_rMMPFC,
+    fx_lFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fx_lFFA_rSTS,
+    fx_lFFA_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_ramygdala, fx_lFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_lFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_ramygdala" ~ "Right",
+      region == "fx_lFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_lFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fx_lFFA_rMMPFC, fx_lFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_lFFA_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rMMPFC" ~ "Right",
+      region == "fx_lFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_lFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fx_lFFA_rSTS, fx_lFFA_lSTS),
+    names_to = "region",
+    values_to = "fx_lFFA_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rSTS" ~ "Right",
+      region == "fx_lFFA_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fx_lFFA_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.05_lFFA_MMPFC_fx <-lmer(fx_lFFA_rlMMPFC ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.05_lFFA_MMPFC_fx)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_lFFA_MMPFC_fx <- lmer(fx_lFFA_rlMMPFC ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.05_lFFA_MMPFC_fx <- tidy(model_LI_0.05_lFFA_MMPFC_fx)
+summary_LI_0.05_lFFA_MMPFC_fx
+
+## Amygdala
+
+model_LI_0.05_lFFA_amygdala_fx <- lmer(fx_lFFA_rlamygdala ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.05_lFFA_amygdala_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.05_lFFA_amygdala_fx <- lmer(fx_lFFA_rlamygdala ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.05_lFFA_amygdala_fx <- tidy(model_LI_0.05_lFFA_amygdala_fx)
+summary_LI_0.05_lFFA_amygdala_fx
+
+## STS
+
+model_LI_0.05_lFFA_STS_fx <- lmer(fx_lFFA_rlSTS ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.05_lFFA_STS_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.05_lFFA_STS_fx <- lmer(fx_lFFA_rlSTS ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.05_lFFA_STS_fx <- tidy(model_LI_0.05_lFFA_STS_fx)
+summary_LI_0.05_lFFA_STS_fx
+
+```
+
+Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.05_rFFA_MMPFC_fx %>% mutate(model = "LI_0.05_fx_rFFA_MMPFC", Label = "Primary"),
+  summary_LI_0.05_rFFA_amygdala_fx %>% mutate(model = "LI_0.05_fx_rFFA_amygdala", Label = "Primary"),
+  summary_LI_0.05_rFFA_STS_fx %>% mutate(model = "LI_0.05_fx_rFFA_STS", Label = "Primary"),
+  summary_LI_0.05_lFFA_MMPFC_fx %>% mutate(model = "LI_0.05_fx_lFFA_MMPFC", Label = "Secondary"),
+  summary_LI_0.05_lFFA_amygdala_fx %>% mutate(model = "LI_0.05_fx_lFFA_amygdala", Label = "Secondary"),
+  summary_LI_0.05_lFFA_STS_fx %>% mutate(model = "LI_0.05_fx_lFFA_STS", Label = "Secondary"),
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ3", "LI_0.05_fx.csv"), row.names = FALSE)
+
+```
+
+### Alternative linear mixed-effects models for threshold p<0.10 (non-preregistered)
+
+Primary analyses
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_rFFA_ramygdala,
+    fx_rFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_rFFA_rMMPFC,
+    fx_rFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_rFFA_rSTS,
+    fx_rFFA_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_rFFA_ramygdala, fx_rFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_rFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_ramygdala" ~ "Right",
+      region == "fx_rFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_rFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fx_rFFA_rMMPFC, fx_rFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_rFFA_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rMMPFC" ~ "Right",
+      region == "fx_rFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_rFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fx_rFFA_rSTS, fx_rFFA_lSTS),
+    names_to = "region",
+    values_to = "fx_rFFA_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_rFFA_rSTS" ~ "Right",
+      region == "fx_rFFA_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_rFFA_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.1_rFFA_MMPFC_fx <-lmer(fx_rFFA_rlMMPFC ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.1_rFFA_MMPFC_fx)
+
+### No interaction effects are significant except for Hemisphere:age, so models are run without interaction effects except for Hemisphere:age
+
+model_LI_0.1_rFFA_MMPFC_fx <- lmer(fx_rFFA_rlMMPFC ~ lateralisation_index_0.1 + Hemisphere + Age + lateralisation_index_0.1:Hemisphere + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.1_rFFA_MMPFC_fx <- tidy(model_LI_0.1_rFFA_MMPFC_fx)
+summary_LI_0.1_rFFA_MMPFC_fx
+
+## Amygdala
+
+model_LI_0.1_rFFA_amygdala_fx <- lmer(fx_rFFA_rlamygdala ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.1_rFFA_amygdala_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.1_rFFA_amygdala_fx <- lmer(fx_rFFA_rlamygdala ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.1_rFFA_amygdala_fx <- tidy(model_LI_0.1_rFFA_amygdala_fx)
+summary_LI_0.1_rFFA_amygdala_fx
+
+## STS
+
+model_LI_0.1_rFFA_STS_fx <- lmer(fx_rFFA_rlSTS ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.1_rFFA_STS_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.1_rFFA_STS_fx <- lmer(fx_rFFA_rlSTS ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.1_rFFA_STS_fx <- tidy(model_LI_0.1_rFFA_STS_fx)
+summary_LI_0.1_rFFA_STS_fx
+
+```
+
+Secondary analyses
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_lFFA_ramygdala,
+    fx_lFFA_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_lFFA_rMMPFC,
+    fx_lFFA_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fx_lFFA_rSTS,
+    fx_lFFA_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fx_lFFA_ramygdala, fx_lFFA_lamygdala),
+    names_to = "region",
+    values_to = "fx_lFFA_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_ramygdala" ~ "Right",
+      region == "fx_lFFA_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_lFFA_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fx_lFFA_rMMPFC, fx_lFFA_lMMPFC),
+    names_to = "region",
+    values_to = "fx_lFFA_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rMMPFC" ~ "Right",
+      region == "fx_lFFA_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_lFFA_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fx_lFFA_rSTS, fx_lFFA_lSTS),
+    names_to = "region",
+    values_to = "fx_lFFA_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fx_lFFA_rSTS" ~ "Right",
+      region == "fx_lFFA_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fx_lFFA_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.1_lFFA_MMPFC_fx <-lmer(fx_lFFA_rlMMPFC ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.1_lFFA_MMPFC_fx)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.1_lFFA_MMPFC_fx <- lmer(fx_lFFA_rlMMPFC ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.1_lFFA_MMPFC_fx <- tidy(model_LI_0.1_lFFA_MMPFC_fx)
+summary_LI_0.1_lFFA_MMPFC_fx
+
+## Amygdala
+
+model_LI_0.1_lFFA_amygdala_fx <- lmer(fx_lFFA_rlamygdala ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.1_lFFA_amygdala_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.1_lFFA_amygdala_fx <- lmer(fx_lFFA_rlamygdala ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.1_lFFA_amygdala_fx <- tidy(model_LI_0.1_lFFA_amygdala_fx)
+summary_LI_0.1_lFFA_amygdala_fx
+
+## STS
+
+model_LI_0.1_lFFA_STS_fx <- lmer(fx_lFFA_rlSTS ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.1_lFFA_STS_fx)
+
+### No interaction effects are significant, so models are run without interaction effects 
+
+model_LI_0.1_lFFA_STS_fx <- lmer(fx_lFFA_rlSTS ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.1_lFFA_STS_fx <- tidy(model_LI_0.1_lFFA_STS_fx)
+summary_LI_0.1_lFFA_STS_fx
+
+```
+
+Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.1_rFFA_MMPFC_fx %>% mutate(model = "LI_0.1_fx_rFFA_MMPFC", Label = "Primary"),
+  summary_LI_0.1_rFFA_amygdala_fx %>% mutate(model = "LI_0.1_fx_rFFA_amygdala", Label = "Primary"),
+  summary_LI_0.1_rFFA_STS_fx %>% mutate(model = "LI_0.1_fx_rFFA_STS", Label = "Primary"),
+  summary_LI_0.1_lFFA_MMPFC_fx %>% mutate(model = "LI_0.1_fx_lFFA_MMPFC", Label = "Secondary"),
+  summary_LI_0.1_lFFA_amygdala_fx %>% mutate(model = "LI_0.1_fx_lFFA_amygdala", Label = "Secondary"),
+  summary_LI_0.1_lFFA_STS_fx %>% mutate(model = "LI_0.1_fx_lFFA_STS", Label = "Secondary"),
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ3", "LI_0.1_fx.csv"), row.names = FALSE)
+
+```
+
+### Plots
+
+```{r}
+
+# Data wrangling
+
+data_plot <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+data_plot <- data_plot[,c(1, 202:231)]
+data_plot <- data_plot %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+data_plot <- data_plot %>%
+  pivot_longer(
+    cols = starts_with("fx_"),
+    names_to = c("Region1", "Region2"),
+    names_pattern = "fx_(.+)_(.+)",
+    values_to = "zscored_value"
+  )
+data_plot <- data_plot %>%
+  mutate(
+    Hemisphere = ifelse(grepl("^r", Region2), "right", "left"),
+    Region2 = sub("^[rl]", "", Region2)
+  )
+data_plot_rFFA_MMPFC <- data_plot %>%
+  filter(Region2 == "MMPFC", Region1 == "rFFA")
+data_plot_lFFA_MMPFC <- data_plot %>%
+  filter(Region2 == "MMPFC", Region1 == "lFFA")
+data_plot_rFFA_amygdala <- data_plot %>%
+  filter(Region2 == "amygdala", Region1 == "rFFA")
+data_plot_lFFA_amygdala <- data_plot %>%
+  filter(Region2 == "amygdala", Region1 == "lFFA")
+data_plot_rFFA_STS <- data_plot %>%
+  filter(Region2 == "STS", Region1 == "rFFA")
+data_plot_lFFA_STS <- data_plot %>%
+  filter(Region2 == "STS", Region1 == "lFFA")
+
+# Colours
+
+custom_colours_amygdala <- c("#E1AA9F", "#D34835")
+custom_colours_MMPFC <- c("#87BACF", "#578CAD")
+custom_colours_FFA <- c("#C39EDA", "#652975")
+custom_colours_STS <- c("#FFF865", "#FFCE1B")
+
+# Define a base theme to avoid repetition
+
+base_theme <- theme_minimal() +
+  theme(
+    strip.text = element_text(size = 14, face = "bold"),
+    strip.background = element_blank(),
+    axis.line.x = element_blank(),
+    axis.text = element_text(size = 16),
+    axis.title = element_text(size = 14, face = "bold"),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 14, face = "bold")
+  )
+
+# Function to create ggplots efficiently
+
+create_plot <- function(data, x_var, y_var, color_values, x_label, y_label = "", legend_title = "Hemisphere", legend_position = "none", remove_y_axis_labels = FALSE) {
+  
+  plot <- ggplot(data, aes(x = {{ x_var }}, y = {{ y_var }}, color = Hemisphere)) +
+    geom_point(alpha = 0.4, size = 2.8, shape = 19) +
+    geom_smooth(method = "lm", se = FALSE, linetype = "solid", linewidth = 2) +
+    scale_color_manual(values = color_values) +
+    labs(x = x_label, y = y_label, color = legend_title) +
+    base_theme +
+    theme(
+      legend.position = legend_position,
+      axis.line.x = element_blank(),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.title.y = element_text(size = 14, face = "bold"),
+      axis.text.y = element_text(size = 12)
+    ) +
+    coord_cartesian(ylim = c(-1, 1)) +  
+    scale_x_continuous(breaks = c(-2, 0, 2))
+
+  if (remove_y_axis_labels) {
+    plot <- plot + theme(
+      axis.title.y = element_blank(),
+      axis.text.y = element_blank()
+    )
+  }
+
+  return(plot)
+}
+
+# Threshold p<0.05
+
+plot_lFFA_MMPFC <- create_plot(data_plot_lFFA_MMPFC, zscored_value, lateralisation_index_0.05, custom_colours_MMPFC, "", "Lateralisation Index (p<0.05)", legend_title = "MMPFC Hemisphere")
+plot_lFFA_amygdala <- create_plot(data_plot_lFFA_amygdala, zscored_value, lateralisation_index_0.05, custom_colours_amygdala, "Functional connectivity between left FFA and region", "Lateralisation Index (p<0.05)", legend_title = "Amygdala Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_lFFA_STS <- create_plot(data_plot_lFFA_STS, zscored_value, lateralisation_index_0.05, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+plot_rFFA_MMPFC <- create_plot(data_plot_rFFA_MMPFC, zscored_value, lateralisation_index_0.05, custom_colours_MMPFC, "", "Lateralisation Index (p<0.05)", legend_title = "MMPFC Hemisphere", legend_position = "bottom")
+plot_rFFA_amygdala <- create_plot(data_plot_rFFA_amygdala, zscored_value, lateralisation_index_0.05, custom_colours_amygdala, "Functional connectivity between right FFA and region", "Lateralisation Index (p<0.05)", legend_title = "Amygdala Hemisphere", remove_y_axis_labels = TRUE)
+plot_rFFA_STS <- create_plot(data_plot_rFFA_STS, zscored_value, lateralisation_index_0.05, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+## Combine plots into a single row
+
+LI_fx_rFFA <- (plot_rFFA_MMPFC | plot_rFFA_amygdala | plot_rFFA_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+LI_fx_lFFA <- (plot_lFFA_MMPFC | plot_lFFA_amygdala | plot_lFFA_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+
+## Save plots
+
+ggsave(here("results/figures", "LI_0.05_fx_rFFA.png"), plot = LI_fx_rFFA, width = 10, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "LI_0.05_fx_lFFA.png"), plot = LI_fx_lFFA, width = 10, height = 5, units = "in", dpi = 300)
+
+# Threshold p<0.10
+
+plot_lFFA_MMPFC <- create_plot(data_plot_lFFA_MMPFC, zscored_value, lateralisation_index_0.1, custom_colours_MMPFC, "", "Lateralisation Index (p<0.10)", legend_title = "MMPFC Hemisphere")
+plot_lFFA_amygdala <- create_plot(data_plot_lFFA_amygdala, zscored_value, lateralisation_index_0.1, custom_colours_amygdala, "Functional connectivity between left FFA and region", "Lateralisation Index (p<0.10)", legend_title = "Amygdala Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_lFFA_STS <- create_plot(data_plot_lFFA_STS, zscored_value, lateralisation_index_0.1, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+plot_rFFA_MMPFC <- create_plot(data_plot_rFFA_MMPFC, zscored_value, lateralisation_index_0.1, custom_colours_MMPFC, "", "Lateralisation Index (p<0.10)", legend_title = "MMPFC Hemisphere")+
+  annotate(
+    "text",
+    x = Inf, y = -Inf,                        # bottom right corner
+    label = "LI effect:\nβ(SE)=0.22(0.10), p=0.027;
+    \n LI x Hemisphere (right) effect\nβ(SE)=-0.23(0.07), p<0.001",    # your annotation
+    hjust = 1.05,      # slightly >1 for proper right alignment
+    vjust = -0.25,      # nudges text up from bottom
+    size = 4,
+    color = "black"
+)
+plot_rFFA_amygdala <- create_plot(data_plot_rFFA_amygdala, zscored_value, lateralisation_index_0.1, custom_colours_amygdala, "Functional connectivity between right FFA and region", "Lateralisation Index (p<0.10)", legend_title = "Amygdala Hemisphere", remove_y_axis_labels = TRUE)
+plot_rFFA_STS <- create_plot(data_plot_rFFA_STS, zscored_value, lateralisation_index_0.1, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+## Combine plots into a single row
+
+LI_fx_rFFA <- (plot_rFFA_MMPFC | plot_rFFA_amygdala | plot_rFFA_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+LI_fx_lFFA <- (plot_lFFA_MMPFC | plot_lFFA_amygdala | plot_lFFA_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+
+## Save plots
+
+ggsave(here("results/figures", "LI_0.1_fx_rFFA.png"), plot = LI_fx_rFFA, width = 10, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "LI_0.1_fx_lFFA.png"), plot = LI_fx_lFFA, width = 10, height = 5, units = "in", dpi = 300)
+
+```
+
+
+## Section II: Functional maturation of MMPFC/amygdala drives lateralisation of FFA response
+
+### Threshold p<0.05
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_ramygdala,
+    fm_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_rMMPFC,
+    fm_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_ramygdala, fm_lamygdala),
+    names_to = "region",
+    values_to = "fm_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_ramygdala" ~ "Right",
+      region == "fm_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fm_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_rMMPFC, fm_lMMPFC),
+    names_to = "region",
+    values_to = "fm_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rMMPFC" ~ "Right",
+      region == "fm_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.05, fm_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fm_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models 
+
+model_LI_fm <- lmer(lateralisation_index_0.05 ~ fm_rlMMPFC*Hemisphere*Age + fm_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_fm)
+
+```
+
+### Threshold p<0.10
+
+```{r}
+
+long_data <- child_LI
+
+# Filter long data
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_ramygdala,
+    fm_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_rMMPFC,
+    fm_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_ramygdala, fm_lamygdala),
+    names_to = "region",
+    values_to = "fm_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_ramygdala" ~ "Right",
+      region == "fm_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fm_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_rMMPFC, fm_lMMPFC),
+    names_to = "region",
+    values_to = "fm_rlMMPFC"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rMMPFC" ~ "Right",
+      region == "fm_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  ## Keep only relevant columns
+  select(ID, lateralisation_index_0.1, fm_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_amygdala_selected <- long_data_amygdala %>%
+  select(ID, Hemisphere, fm_rlamygdala)
+model_data <- merge(long_data_amygdala_selected, long_data_MMPFC, by = c("ID", "Hemisphere"))
+model_data$Hemisphere <- as.factor(model_data$Hemisphere)
+
+# Models 
+
+model_LI_fm <- lmer(lateralisation_index_0.1 ~ fm_rlMMPFC*Hemisphere*Age + fm_rlamygdala*Hemisphere*Age + MeanFD + (1| ID), data = model_data)
+summary(model_LI_fm)
+
+```
+
+Since models at two thresholds show convergence issues, a similar approach than the one used in the previous section was taken for these analyses.
+
+### Alternative linear mixed-effects models for threshold p<0.05 (non-preregistered)
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_ramygdala,
+    fm_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_rMMPFC,
+    fm_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_rSTS,
+    fm_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_ramygdala, fm_lamygdala),
+    names_to = "region",
+    values_to = "fm_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_ramygdala" ~ "Right",
+      region == "fm_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fm_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fm_rMMPFC, fm_lMMPFC),
+    names_to = "region",
+    values_to = "fm_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rMMPFC" ~ "Right",
+      region == "fm_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fm_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fm_rSTS, fm_lSTS),
+    names_to = "region",
+    values_to = "fm_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rSTS" ~ "Right",
+      region == "fm_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fm_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.05_MMPFC_fm <-lmer(fm_rlMMPFC ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.05_MMPFC_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_MMPFC_fm <- lmer(fm_rlMMPFC ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.05_MMPFC_fm <- tidy(model_LI_0.05_MMPFC_fm)
+summary_LI_0.05_MMPFC_fm
+
+## Amygdala
+
+model_LI_0.05_amygdala_fm <-lmer(fm_rlamygdala ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.05_amygdala_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_amygdala_fm <- lmer(fm_rlamygdala ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.05_amygdala_fm <- tidy(model_LI_0.05_amygdala_fm)
+summary_LI_0.05_amygdala_fm
+
+## STS
+
+model_LI_0.05_STS_fm <-lmer(fm_rlSTS ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.05_STS_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_STS_fm <- lmer(fm_rlSTS ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.05_STS_fm <- tidy(model_LI_0.05_STS_fm)
+summary_LI_0.05_STS_fm
+
+```
+
+Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.05_MMPFC_fm %>% mutate(model = "LI_0.05_fm_MMPFC"),
+  summary_LI_0.05_amygdala_fm %>% mutate(model = "LI_0.05_fm_amygdala"),
+  summary_LI_0.05_STS_fm %>% mutate(model = "LI_0.05_fm_STS"),
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.01,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ3", "LI_0.05_fm.csv"), row.names = FALSE)
+
+```
+
+### Alternative linear mixed-effects models for threshold p<0.10 (non-preregistered)
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_amygdala <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_ramygdala,
+    fm_lamygdala,
+    Age,
+    MeanFD
+  )
+long_data_MMPFC <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_rMMPFC,
+    fm_lMMPFC,
+    Age,
+    MeanFD
+  )
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_rSTS,
+    fm_lSTS,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_amygdala <- long_data_amygdala %>%
+  ## Pivot the data into a long format with "Right" and "Left" hemispheres
+  pivot_longer(
+    cols = c(fm_ramygdala, fm_lamygdala),
+    names_to = "region",
+    values_to = "fm_rlamygdala"
+  ) %>%
+  ## Create Hemisphere column based on the region name
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_ramygdala" ~ "Right",
+      region == "fm_lamygdala" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fm_rlamygdala, Age, MeanFD, Hemisphere)
+
+long_data_MMPFC <- long_data_MMPFC %>%
+  pivot_longer(
+    cols = c(fm_rMMPFC, fm_lMMPFC),
+    names_to = "region",
+    values_to = "fm_rlMMPFC"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rMMPFC" ~ "Right",
+      region == "fm_lMMPFC" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fm_rlMMPFC, Age, MeanFD, Hemisphere)
+
+long_data_STS <- long_data_STS %>%
+  pivot_longer(
+    cols = c(fm_rSTS, fm_lSTS),
+    names_to = "region",
+    values_to = "fm_rlSTS"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rSTS" ~ "Right",
+      region == "fm_lSTS" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fm_rlSTS, Age, MeanFD, Hemisphere)
+
+# Models
+
+## MMPFC
+
+model_LI_0.1_MMPFC_fm <-lmer(fm_rlMMPFC ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_MMPFC)
+summary(model_LI_0.1_MMPFC_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.1_MMPFC_fm <- lmer(fm_rlMMPFC ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_MMPFC)
+summary_LI_0.1_MMPFC_fm <- tidy(model_LI_0.1_MMPFC_fm)
+summary_LI_0.1_MMPFC_fm
+
+## Amygdala
+
+model_LI_0.1_amygdala_fm <-lmer(fm_rlamygdala ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_amygdala)
+summary(model_LI_0.1_amygdala_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.1_amygdala_fm <- lmer(fm_rlamygdala ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_amygdala)
+summary_LI_0.1_amygdala_fm <- tidy(model_LI_0.1_amygdala_fm)
+summary_LI_0.1_amygdala_fm
+
+## STS
+
+model_LI_0.1_STS_fm <-lmer(fm_rlSTS ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_STS)
+summary(model_LI_0.1_STS_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.1_STS_fm <- lmer(fm_rlSTS ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_STS)
+summary_LI_0.1_STS_fm <- tidy(model_LI_0.1_STS_fm)
+summary_LI_0.1_STS_fm
+
+```
+
+Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.1_MMPFC_fm %>% mutate(model = "LI_0.1_fm_MMPFC"),
+  summary_LI_0.1_amygdala_fm %>% mutate(model = "LI_0.1_fm_amygdala"),
+  summary_LI_0.1_STS_fm %>% mutate(model = "LI_0.1_fm_STS"),
+) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.1,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ3", "LI_0.1_fm.csv"), row.names = FALSE)
+
+```
+
+### Plots
+
+```{r}
+
+# Data wrangling
+
+data_plot <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+data_plot <- data_plot[,c(1:3, 6:9, 230:231)]
+data_plot <- data_plot %>%
+  rename_with(~ sub("^zscored_", "", .x), starts_with("zscored_"))
+data_plot <- data_plot %>%
+  select(fm_rMMPFC, fm_lMMPFC, fm_ramygdala, fm_lamygdala, fm_rSTS, fm_lSTS, lateralisation_index_0.05, lateralisation_index_0.1) %>%
+  pivot_longer(
+    cols = c("fm_rMMPFC", "fm_lMMPFC", "fm_ramygdala", "fm_lamygdala", "fm_rSTS", "fm_lSTS"),
+    names_to = c("Hemisphere", "Region"),
+    names_pattern = "fm_([rl])(.+)",   # r/l hemisphere + region name
+    values_to = "zscored_value"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      Hemisphere == "r" ~ "right",
+      Hemisphere == "l" ~ "left"),
+    Region = case_when(
+      Region == "MMPFC" ~ "MMPFC",
+      Region == "amygdala" ~ "amygdala",
+      Region == "STS" ~ "STS",
+      TRUE ~ Region
+    )
+  )
+data_plot_MMPFC <- data_plot %>%
+  filter(Region == "MMPFC")
+data_plot_amygdala <- data_plot %>%
+  filter(Region == "amygdala")
+data_plot_STS <- data_plot %>%
+  filter(Region == "STS")
+
+# Threshold p<0.05
+
+plot_MMPFC <- create_plot(data_plot_MMPFC, zscored_value, lateralisation_index_0.05, custom_colours_MMPFC, "", "Lateralisation Index (p<0.05)", legend_title = "MMPFC Hemisphere")
+plot_amygdala <- create_plot(data_plot_amygdala, zscored_value, lateralisation_index_0.05, custom_colours_amygdala, "Functional maturity of region", "Lateralisation Index (p<0.05)", legend_title = "Amygdala Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_STS <- create_plot(data_plot_STS, zscored_value, lateralisation_index_0.05, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+## Combine plots into a single row
+
+LI_fm <- (plot_MMPFC | plot_amygdala | plot_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+## Save plots
+
+ggsave(here("results/figures", "LI_0.05_fm.png"), plot = LI_fm, width = 10, height = 5, units = "in", dpi = 300)
+
+# Threshold p<0.10
+
+plot_MMPFC <- create_plot(data_plot_MMPFC, zscored_value, lateralisation_index_0.1, custom_colours_MMPFC, "", "Lateralisation Index (p<0.10)", legend_title = "MMPFC Hemisphere")
+plot_amygdala <- create_plot(data_plot_amygdala, zscored_value, lateralisation_index_0.1, custom_colours_amygdala, "Functional maturity of region", "Lateralisation Index (p<0.1)", legend_title = "Amygdala Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+plot_STS <- create_plot(data_plot_STS, zscored_value, lateralisation_index_0.1, custom_colours_STS, "", "", legend_title = "STS Hemisphere", legend_position = "bottom", remove_y_axis_labels = TRUE)
+
+## Combine plots into a single row
+
+LI_fm <- (plot_MMPFC | plot_amygdala | plot_STS) +  
+  plot_layout(ncol = 3, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+
+## Save plots
+
+ggsave(here("results/figures", "LI_0.1_fm.png"), plot = LI_fm, width = 10, height = 5, units = "in", dpi = 300)
+
+```
+
+
+## Section III: Relationship between lateralisation of FFA response and functional maturity of FFA (non-preregistered)
+
+#### Threshold p<0.05
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_FFA <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.05,
+    fm_rFFA,
+    fm_lFFA,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_FFA <- long_data_FFA %>%
+  pivot_longer(
+    cols = c(fm_rFFA, fm_lFFA),
+    names_to = "region",
+    values_to = "fm_rlFFA"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rFFA" ~ "Right",
+      region == "fm_lFFA" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.05, fm_rlFFA, Age, MeanFD, Hemisphere)
+
+
+# Models
+
+## FFA
+
+model_LI_0.05_FFA_fm <-lmer(fm_rlFFA ~ lateralisation_index_0.05*Hemisphere*Age + MeanFD + (1|ID), data = long_data_FFA)
+summary(model_LI_0.05_FFA_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.05_FFA_fm <- lmer(fm_rlFFA ~ lateralisation_index_0.05 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_FFA)
+summary_LI_0.05_FFA_fm <- tidy(model_LI_0.05_FFA_fm)
+summary_LI_0.05_FFA_fm
+
+```
+
+### Threshold p<0.10
+
+```{r}
+
+# Data wrangling
+
+long_data <- child_LI
+
+long_data_FFA <- long_data %>%
+  select(
+    ID,
+    lateralisation_index_0.1,
+    fm_rFFA,
+    fm_lFFA,
+    Age,
+    MeanFD
+  )
+
+## Reshape the data and adjust columns
+
+long_data_FFA <- long_data_FFA %>%
+  pivot_longer(
+    cols = c(fm_rFFA, fm_lFFA),
+    names_to = "region",
+    values_to = "fm_rlFFA"
+  ) %>%
+  mutate(
+    Hemisphere = case_when(
+      region == "fm_rFFA" ~ "Right",
+      region == "fm_lFFA" ~ "Left",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1, fm_rlFFA, Age, MeanFD, Hemisphere)
+
+
+# Models
+
+## FFA
+
+model_LI_0.1_FFA_fm <-lmer(fm_rlFFA ~ lateralisation_index_0.1*Hemisphere*Age + MeanFD + (1|ID), data = long_data_FFA)
+summary(model_LI_0.1_FFA_fm)
+
+### No interaction effects are significant, so models are run without interaction effects
+
+model_LI_0.1_FFA_fm <- lmer(fm_rlFFA ~ lateralisation_index_0.1 + Hemisphere + Age + MeanFD + (1| ID), data = long_data_FFA)
+summary_LI_0.1_FFA_fm <- tidy(model_LI_0.1_FFA_fm)
+summary_LI_0.1_FFA_fm
+
+```
+
+Save models
+
+```{r}
+
+all_summaries <- bind_rows(
+  summary_LI_0.1_FFA_fm %>% mutate(model = "LI_0.1_fm_FFA"),
+  summary_LI_0.05_FFA_fm %>% mutate(model = "LI_0.05_fm_FFA")) %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    df = round(df, 0),
+    p.value = if_else(
+      p.value < 0.1,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(all_summaries, here("results/RQ3", "LI_fm_FFA.csv"), row.names = FALSE)
+
+```
+
+
+```{r}
+
+markdownToHTML("FRIC_LateralisationIndex.Rmd",output ="FRIC_LateralisationIndex.html")
+
+```
+

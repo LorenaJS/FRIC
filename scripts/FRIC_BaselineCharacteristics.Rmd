@@ -1,0 +1,284 @@
+---
+title: "BaselineCharacteristics"
+author: "LJS"
+date: "2025-05-12"
+output: html_document
+---
+
+
+#Libraries 
+
+```{r setup, include=FALSE}
+
+library("rlang") #toolbox
+library("readr") #toolbox
+library("dplyr") #data manipulation
+library("here") #toolbox
+library("tidyverse") #data manipulation
+library("tidytext") #data manipulation
+library("knitr") #rmarkdown
+library("htmltools") #rmarkdown
+library("markdown") #rmarkdown
+library("httpuv") #rmarkdown
+library("NCmisc") #toolbox
+library("stringr") #data manipulation
+library("vtable") #summary tables
+library("gtsummary") #summary tables
+
+```
+
+
+# Face Responses in Childhood (FRIC) project
+
+This script reports demographic and motion characteristics of final sample.
+
+Structure:
+- Section I: Read and tidy up data
+- Section II: Demographic characteristics
+- Section III: Correlation between motion and age
+
+
+## Section I: Read and tidy up data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names=TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]","", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+## Create child or adult lists
+
+adult_list <- row.names(participants)[which(participants[["Child_Adult"]] == "adult")]
+child_MRIvariables <- read_csv(here("processed_data", "child_MRIvariables.csv"), col_names=TRUE)
+child_list <- child_MRIvariables$ID
+participants_list <- c(adult_list, child_list)
+
+## Final sample
+
+participants_filtered <- participants %>%
+  filter(ID %in% participants_list)
+
+# Add motion to final sample covariates
+
+motion <- read_tsv(here("raw_data/motion", "outlier_info.tsv"), col_names=TRUE)
+colnames(motion)[which(names(motion) == "subject")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+motion$ID <- gsub("[sub-pixar-]","", motion$ID)
+motion$ID <- trimws(motion$ID)
+participants_filtered <- merge(participants_filtered, motion, by="ID")
+
+# Ensure variables are treated as numeric
+
+participants_filtered$ID <- as.factor(participants_filtered$ID)
+participants_filtered$Age <- as.numeric(participants_filtered$Age)
+participants_filtered$MeanFD <- as.numeric(participants_filtered$MeanFD)
+participants_filtered$Gender <- as.factor(participants_filtered$Gender)
+
+```
+
+
+## Section II: Demographic characteristics
+
+### General sample
+
+#### Number of participants per age group
+
+```{r}
+
+# Create a frequency table for the 'AgeGroup' column
+
+age_group_frequency <- table(participants_filtered$AgeGroup)
+
+# Print the frequency table
+
+print(age_group_frequency)
+
+```
+
+#### Check data distribution for reporting
+
+```{r}
+
+shapiro.test(participants_filtered$Age)
+hist(participants_filtered$Age) 
+shapiro.test(participants_filtered$MeanFD)
+hist(participants_filtered$MeanFD) 
+
+```
+
+#### Create table
+
+```{r}
+
+targetdata <- participants_filtered[,c(2,4,5,24)]
+table_dem <- tbl_summary(
+  data      = targetdata,
+  by        = Child_Adult,
+  statistic = list(
+    c("Age", "MeanFD") ~ "{mean} ({sd}); {median} ({min}, {max})"
+  ),
+  digits    = all_continuous() ~ 3,
+  missing   = "no",               # hide missing row entirely
+  include   = everything()
+)
+table_dem
+
+```
+
+#### Correlation between motion and age
+
+```{r}
+
+children_filtered <- participants_filtered %>%
+  filter(ID %in% child_list)
+cor_result <- cor.test(children_filtered$Age, children_filtered$MeanFD, method = "spearman", use = "complete.obs")
+n <- sum(complete.cases(children_filtered$Age, children_filtered$MeanFD))
+rho <- round(cor_result$estimate, 2)
+p <- if (cor_result$p.value < 0.001) {
+  format(cor_result$p.value, scientific = TRUE, digits = 4)
+} else {
+  sprintf("%.3f", cor_result$p.value)
+}
+
+df <- n - 2
+
+```
+
+##### Create footnote text, add and save table
+
+```{r}
+
+# Convert gtsummary table to tibble
+
+table_dem <- as_tibble(table_dem)
+colnames(table_dem) <- c(
+  "Characteristic",
+  "Adults (N=33)",
+  "Children (N=117)"
+)
+
+# Add footnote as final row
+
+table_dem <- bind_rows(
+  table_dem,
+  tibble(
+    Characteristic = footnote_text,
+    `Adults (N=33)` = NA,
+    `Children (N=117)` = NA
+  )
+)
+
+# Save
+write.csv(
+  table_dem,
+  here("results/demographics", "Sample_characteristics.csv"),
+  row.names = FALSE
+)
+
+```
+
+### Lateralisation analyses samples
+
+#### p<0.05
+
+##### Tidy up data
+
+```{r}
+
+children_filtered <- participants_filtered %>%
+  filter(ID %in% child_list) %>%
+  left_join(
+    child_MRIvariables %>%
+      select(ID, lateralisation_index_0.05 = colnames(child_MRIvariables)[230]),
+    by = "ID"
+  ) %>%
+  filter(!is.na(lateralisation_index_0.05))
+
+```
+
+##### Create table
+
+```{r}
+
+targetdata <- children_filtered[,c(2,5,24)]
+table_dem <- tbl_summary(
+  data      = targetdata,
+  statistic = list(
+    c("Age", "MeanFD") ~ "{mean} ({sd}); {median} ({min}, {max})"
+  ),
+  digits    = all_continuous() ~ 3,
+  missing   = "no",               # hide missing row entirely
+  include   = everything()
+)
+table_dem
+
+```
+
+##### Save table
+
+```{r}
+
+table_dem <- as_tibble(table_dem)
+write.csv(table_dem, here("results/demographics", "Sample_characteristics_LI_0.05.csv"), row.names=FALSE)
+
+```
+
+#### p<0.10
+
+##### Tidy up data
+
+```{r}
+
+children_filtered <- participants_filtered %>%
+  filter(ID %in% child_list) %>%
+  left_join(
+    child_MRIvariables %>%
+      select(ID, lateralisation_index_0.10 = colnames(child_MRIvariables)[231]),
+    by = "ID"
+  ) %>%
+  filter(!is.na(lateralisation_index_0.10))
+
+```
+
+##### Create table
+
+```{r}
+
+targetdata <- children_filtered[,c(2,5,24)]
+table_dem <- tbl_summary(
+  data      = targetdata,
+  statistic = list(
+    c("Age", "MeanFD") ~ "{mean} ({sd}); {median} ({min}, {max})"
+  ),
+  digits    = all_continuous() ~ 3,
+  missing   = "no",               # hide missing row entirely
+  include   = everything()
+)
+table_dem
+
+```
+
+##### Save table
+
+```{r}
+
+table_dem <- as_tibble(table_dem)
+write.csv(table_dem, here("results/demographics", "Sample_characteristics_LI_0.10.csv"), row.names=FALSE)
+
+```
+
+
+```{r}
+
+markdownToHTML("FRIC_BaselineCharacteristics.Rmd",output ="FRIC_BaselineCharacteristics.html")
+
+```
+

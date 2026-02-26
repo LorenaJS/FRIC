@@ -1,0 +1,1207 @@
+---
+title: "FRIC_MRIvariables"
+author: "LJS"
+date: "2025-01-08"
+output: html_document
+---
+
+
+# Libraries 
+
+```{r setup, include=FALSE}
+
+library("rlang") #toolbox
+library("readr") #toolbox
+library("dplyr") #data manipulation
+library("here") #toolbox
+library("tidyverse") #data manipulation
+library("ggpubr") #plotting
+library("tidytext") #data manipulation
+library("knitr") #rmarkdown
+library("htmltools") #rmarkdown
+library("markdown") #rmarkdown
+library("httpuv") #rmarkdown
+library("NCmisc") #toolbox
+library("stringr") #data manipulation
+library("tidyr") #data manipulation
+library("purrr") #data manipulation
+
+```
+
+
+# Face Responses in Childhood (FRIC) project
+
+This script creates MRI variables i.e., functional  maturity  measures, magnitude of responses to face and scene events, inter-region  correlations  (also  referred  to  as  functional  connectivity) and lateralisation index of FFA at two statistical thresholds.
+
+Structure:
+- Section I: Functional maturity (fm)
+- Section II: Magnitude of responses to face and scene events
+- Section III: Inter-region correlations (functional connectivity, fx)
+- Section IV: Lateralisation index (LI)
+- Section V: Combine all children dependent variables into one spreadsheet and save files
+
+
+## Section I: Functional maturity (fm)
+
+### Read data
+
+```{r}
+
+# Covariates
+
+participants <- read_tsv(here("raw_data/covariates", "participants.tsv"), col_names = TRUE)
+colnames(participants)[which(names(participants) == "participant_id")] <- "ID"
+
+## Remove the word "pixar" and trim extra whitespace
+
+participants$ID <- gsub("[sub-pixar-]", "", participants$ID)
+participants$ID <- trimws(participants$ID)
+
+## Create child or adult lists
+
+adult_list <- row.names(participants)[which(participants[["Child_Adult"]] == "adult")]
+child_list <- row.names(participants)[which(participants[["Child_Adult"]] == "child")]
+child_list <- sprintf("%03d", as.integer(child_list))
+
+# Timecourses
+
+## Anatomical ROIs: amygdalae
+
+tcs_amygdala <- read.csv(here("raw_data/timecourses", "tcs_amygdala.csv"), header = TRUE, dec = ".", sep = ",")
+
+### Remove the word "pixar" and trim extra whitespace
+
+tcs_amygdala$sub <- gsub("[pixar]", "", tcs_amygdala$sub)
+tcs_amygdala$sub <- trimws(tcs_amygdala$sub)
+
+### Tidy up final columns
+
+tcs_amygdala$run <- NULL
+colnames(tcs_amygdala) <- c("time", "ID", "lamygdala", "ramygdala")
+
+## Functional ROIs: FFA, STS, MMPFC
+
+tcs_fROIs <- read.csv(here("raw_data/timecourses", "tcs_fROIs.csv"), header = TRUE, dec = ".", sep = ",")
+
+### Remove the word "pixar" and trim extra whitespace
+
+tcs_fROIs$sub <- gsub("[pixar]", "", tcs_fROIs$sub)
+tcs_fROIs$sub <- trimws(tcs_fROIs$sub)
+
+### Creating a single column for left/right ROI tcs
+#### Define mapping of new columns to their source columns
+
+roi_map <- list(
+  left_FFA  = c("fROI.lFFA.lffa.lloc.splithalf.01", "fROI.lFFA.lffa.lloc.splithalf.02"),
+  right_FFA = c("fROI.rFFA.rffa.rloc.splithalf.01", "fROI.rFFA.rffa.rloc.splithalf.02"),
+  left_STS  = c("fROI.lSTS.lsts.lloc.splithalf.01", "fROI.lSTS.lsts.lloc.splithalf.02"),
+  right_LOC = c("fROI.rSTS.rsts.rloc.splithalf.01", "fROI.rSTS.rsts.rloc.splithalf.02"),
+  left_MMPFC  = c("fROI.lMMPFC.lmmpfc.ls2.splithalf.01", "fROI.lMMPFC.lmmpfc.ls2.splithalf.02"),
+  right_MMPFC = c("fROI.rMMPFC.rmmpfc.rs2.splithalf.01", "fROI.rMMPFC.rmmpfc.rs2.splithalf.02")
+)
+
+#### Loop over map and add columns
+
+tcs_fROIs <- tcs_fROIs %>%
+  mutate(across(.cols = everything(), .fns = identity)) %>% # keep structure
+  { 
+    out <- .
+    for (newcol in names(roi_map)) {
+      out[[newcol]] <- rowSums(out[roi_map[[newcol]]], na.rm = TRUE)
+      out[[newcol]][out[[newcol]] == 0] <- NA
+    }
+    out
+  }
+
+### Change timepoint numeration
+
+tcs_fROIs <- tcs_fROIs %>%
+  mutate(time = case_when(
+    half == "splithalf-01" ~ time + 0,
+    half == "splithalf-02" ~ time + 86,
+    TRUE ~ time
+  ))
+
+### Tidy up final columns
+
+tcs_fROIs <- subset(tcs_fROIs, select = -c(3:16))
+colnames(tcs_fROIs) <- c("time", "ID", "lFFA", "rFFA", "lSTS", "rSTS", "lMMPFC", "rMMPFC")
+
+```
+
+### Generate/READ average adult timecourses (tcs)
+
+```{r}
+
+# Generating average adult tcs for amygdalae
+
+adult_tcs_amygdala <- tcs_amygdala %>%
+  filter(ID %in% adult_list)
+avg_adult_tcs_amygdala <- adult_tcs_amygdala %>%
+  group_by(time) %>%
+  summarise(
+    avg_lamygdala = mean(lamygdala, na.rm = TRUE),
+    avg_ramygdala = mean(ramygdala, na.rm = TRUE)
+  )
+
+# Traditional fROIs from adult samples
+
+avg_adult_tcs_trad_fROIs <- read.csv(here("raw_data/timecourses", "tcs_trad_adult_fROIs.csv"), header = TRUE, dec = ".", sep = ",")
+
+## Change timepoint numeration according to first TR=0
+
+avg_adult_tcs_trad_fROIs <- avg_adult_tcs_trad_fROIs %>%
+  mutate(time = time - 1)
+
+```
+
+### Generate fm per individual
+
+Amygdala 
+
+```{r}
+
+# Calculate general fm
+
+## Data wrangling
+
+child_tcs_amygdala <- tcs_amygdala %>%
+  filter(ID %in% child_list)
+fm_data_tcs_amygdala <- merge(child_tcs_amygdala, avg_adult_tcs_amygdala, by = "time")
+child_fm_amygdala <- numeric(nrow(fm_data_tcs_amygdala))
+
+## Calculate Pearson correlations for left and right amygdala
+
+child_fm_amygdala <- fm_data_tcs_amygdala %>%
+  group_by(ID) %>%
+  summarise(
+    lamygdala = cor(lamygdala, avg_lamygdala, method = "pearson", use = "complete.obs"),
+    ramygdala = cor(ramygdala, avg_ramygdala, method = "pearson", use = "complete.obs")
+  )
+
+# Columns to z-score
+
+roi_cols <- c("lamygdala", "ramygdala")
+
+# Create a list to store zscore vectors
+
+z_list <- list()
+
+# Loop to compute z-scores
+
+for (col in roi_cols) {
+  mean_val <- mean(child_fm_amygdala[[col]], na.rm = TRUE)
+  sd_val   <- sd(child_fm_amygdala[[col]], na.rm = TRUE)
+  z_list[[col]] <- (child_fm_amygdala[[col]] - mean_val) / sd_val
+}
+
+# Add z-scores to dataframe with the names you requested
+
+child_fm_amygdala <- child_fm_amygdala %>%
+  ungroup() %>%
+  mutate(
+    zscored_lamygdala   = z_list$lamygdala,
+    zscored_ramygdala   = z_list$ramygdala
+  )
+
+```
+
+fROIs
+
+```{r}
+
+# Calculate general fm
+
+## Data wrangling
+
+child_tcs_fROIs <- tcs_fROIs %>%
+  filter(ID %in% child_list)
+fm_data_tcs_fROIs <- merge(child_tcs_fROIs, avg_adult_tcs_trad_fROIs, by = "time")
+child_fm_fROIs <- NULL
+
+## Calculate Pearson correlations for left and right fROIs
+
+child_fm_fROIs <- fm_data_tcs_fROIs %>%
+  group_by(ID) %>%
+  nest() %>%
+  mutate(
+    lFFA = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$lFFA, seg1$avg_lFFA, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$lFFA, seg2$avg_lFFA, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    }),
+    rFFA = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$rFFA, seg1$avg_rFFA, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$rFFA, seg2$avg_rFFA, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    }),
+    lSTS = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$lSTS, seg1$avg_lSTS, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$lSTS, seg2$avg_lSTS, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    }),
+    rSTS = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$rSTS, seg1$avg_rSTS, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$rSTS, seg2$avg_rSTS, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    }),
+    lMMPFC = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$lMMPFC, seg1$avg_lMMPFC, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$lMMPFC, seg2$avg_lMMPFC, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    }),
+    rMMPFC = map_dbl(data, ~ {
+      tc <- .x
+      seg1 <- tc %>% filter(time >= 0 & time <= 81)
+      seg2 <- tc %>% filter(time >= 86 & time <= 167)
+      corr1 <- cor(seg1$rMMPFC, seg1$avg_rMMPFC, method = "pearson", use = "complete.obs")
+      corr2 <- cor(seg2$rMMPFC, seg2$avg_rMMPFC, method = "pearson", use = "complete.obs")
+      mean(c(corr1, corr2), na.rm = TRUE)
+    })
+  ) %>%
+  select(ID, lFFA, rFFA, lSTS, rSTS, lMMPFC, rMMPFC)
+
+
+# Columns to z-score
+
+roi_cols <- c("lFFA", "rFFA", "lSTS", "rSTS", "lMMPFC", "rMMPFC")
+
+# Create a list to store zscore vectors
+
+z_list <- list()
+
+# Loop to compute z-scores
+
+for (col in roi_cols) {
+  mean_val <- mean(child_fm_fROIs[[col]], na.rm = TRUE)
+  sd_val   <- sd(child_fm_fROIs[[col]], na.rm = TRUE)
+  z_list[[col]] <- (child_fm_fROIs[[col]] - mean_val) / sd_val
+}
+
+# Add z-scores to dataframe with the names requested
+
+child_fm_fROIs <- child_fm_fROIs %>%
+  ungroup() %>%
+  mutate(
+    zscored_lFFA   = z_list$lFFA,
+    zscored_rFFA   = z_list$rFFA,
+    zscored_lSTS   = z_list$lSTS,
+    zscored_rSTS   = z_list$rSTS,
+    zscored_lMMPFC = z_list$lMMPFC,
+    zscored_rMMPFC = z_list$rMMPFC
+  )
+
+```
+
+Group results
+
+```{r}
+
+child_fm <- merge(child_fm_amygdala, child_fm_fROIs, by = "ID")
+child_fm <- child_fm %>% select(contains(c("ID", "zscored")))
+colnames(child_fm) <- c("ID", "zscored_fm_lamygdala", "zscored_fm_ramygdala", "zscored_fm_lFFA", "zscored_fm_rFFA", "zscored_fm_lSTS", "zscored_fm_rSTS", "zscored_fm_lMMPFC", "zscored_fm_rMMPFC")
+
+```
+
+Save timecourse data
+
+```{r}
+
+tcs_total <- merge(tcs_amygdala, tcs_fROIs, by = c("time", "ID"), all.x = TRUE)
+write.csv(tcs_total, here("processed_data", "tcs_total.csv"), row.names = FALSE)
+
+```
+
+
+## Section II: Magnitude of responses to face and scene events
+
+### Read data
+
+```{r}
+
+events_TRs <- read_tsv(here("raw_data/events", "faces_scenes.tsv"), col_names=TRUE)
+rownames(events_TRs) <- NULL
+events_TRs$event <- c("F01", "F09", "F11", "F04", "F10", "F12", "F07", "F08", "F06", "F05", "F02", "F03",
+                     "S07", "S02", "S03", "S04", "S12", "S11", "S10", "S06", "S08", "S05", "S09", "S01")
+
+```
+
+### Find timepoint per each face/scene event in the movie that elicited the peak average magnitude of responses in adults (i.e., 12 timepoints for face events, 12 timepoints for scene events)
+
+Amygdala
+
+```{r}
+
+# Function to find the timepoint associated with the maximum response value for both left and right amygdala in an interval
+
+get_max_timepoint <- function(start, end, avg_adult_tcs_amygdala) {
+  ## Filter rows where timepoint is within the interval [start, end]
+  interval_data <- avg_adult_tcs_amygdala[avg_adult_tcs_amygdala$time >= start & avg_adult_tcs_amygdala$time <= end, ]
+  
+  ## If there are values within the interval, find the timepoint with the max value for both left and right amygdala
+    if (nrow(interval_data) > 0) {
+    ## Find the timepoint associated with the max value for left amygdala
+    max_lindex <- which.max(interval_data$avg_lamygdala)
+    max_ltimepoint <- interval_data$time[max_lindex]
+            
+    ## Find the timepoint associated with the max value for right amygdala
+    max_rindex <- which.max(interval_data$avg_ramygdala)
+    max_rtimepoint <- interval_data$time[max_rindex]
+            
+    ## Return both timepoints for left and right amygdala
+        return(c(max_ltimepoint, max_rtimepoint))
+  } else {
+  return(c(NA, NA))  #return NA if no timepoints are within the interval
+  }
+}
+
+# Apply the function to each row of the interval_df
+
+max_timepoints <- t(mapply(get_max_timepoint, events_TRs$onset, events_TRs$end, MoreArgs = list(avg_adult_tcs_amygdala = avg_adult_tcs_amygdala)))
+
+# Add the results to the interval dataframe
+
+events_TRs$max_lamygdala_timepoint <- max_timepoints[, 1]
+events_TRs$max_ramygdala_timepoint <- max_timepoints[, 2]
+
+```
+
+FFA
+
+```{r}
+
+get_max_timepoint <- function(start, end, avg_adult_tcs_trad_fROIs) {
+  ## Filter rows where timepoint is within the interval [start, end]
+  interval_data <- avg_adult_tcs_trad_fROIs[avg_adult_tcs_trad_fROIs$time >= start & avg_adult_tcs_trad_fROIs$time <= end, ]
+  
+  ## If there are values within the interval, find the timepoint with the max value for both left and right FFA
+    if (nrow(interval_data) > 0) {
+    ## Find the timepoint associated with the max value for left FFA
+    max_lindex <- which.max(interval_data$avg_lFFA)
+    max_ltimepoint <- interval_data$time[max_lindex]
+            
+    ## Find the timepoint associated with the max value for right FFA
+    max_rindex <- which.max(interval_data$avg_rFFA)
+    max_rtimepoint <- interval_data$time[max_rindex]
+            
+    ## Return both timepoints for left and right FFA
+        return(c(max_ltimepoint, max_rtimepoint))
+  } else {
+  return(c(NA, NA))  #return NA if no timepoints are within the interval
+  }
+}
+
+# Apply the function to each row of the interval_df
+
+max_timepoints <- t(mapply(get_max_timepoint, events_TRs$onset, events_TRs$end, MoreArgs = list(avg_adult_tcs_trad_fROIs = avg_adult_tcs_trad_fROIs)))
+
+# Add the results to the interval dataframe
+
+events_TRs$max_lFFA_timepoint <- max_timepoints[, 1]
+events_TRs$max_rFFA_timepoint <- max_timepoints[, 2]
+
+```
+
+STS
+
+```{r}
+
+get_max_timepoint <- function(start, end, avg_adult_tcs_trad_fROIs) {
+  ## Filter rows where timepoint is within the interval [start, end]
+  interval_data <- avg_adult_tcs_trad_fROIs[avg_adult_tcs_trad_fROIs$time >= start & avg_adult_tcs_trad_fROIs$time <= end, ]
+  
+  ## If there are values within the interval, find the timepoint with the max value for both left and right STS
+    if (nrow(interval_data) > 0) {
+    ## Find the timepoint associated with the max value for left STS
+    max_lindex <- which.max(interval_data$avg_lSTS)
+    max_ltimepoint <- interval_data$time[max_lindex]
+            
+    ## Find the timepoint associated with the max value for right STS
+    max_rindex <- which.max(interval_data$avg_rSTS)
+    max_rtimepoint <- interval_data$time[max_rindex]
+            
+    ## Return both timepoints for left and right STS
+        return(c(max_ltimepoint, max_rtimepoint))
+  } else {
+  return(c(NA, NA))  #return NA if no timepoints are within the interval
+  }
+}
+
+# Apply the function to each row of the interval_df
+
+max_timepoints <- t(mapply(get_max_timepoint, events_TRs$onset, events_TRs$end, MoreArgs = list(avg_adult_tcs_trad_fROIs = avg_adult_tcs_trad_fROIs)))
+
+# Add the results to the interval dataframe
+
+events_TRs$max_lSTS_timepoint <- max_timepoints[, 1]
+events_TRs$max_rSTS_timepoint <- max_timepoints[, 2]
+
+```
+
+MMPFC
+
+```{r}
+
+get_max_timepoint <- function(start, end, avg_adult_tcs_trad_fROIs) {
+  ## Filter rows where timepoint is within the interval [start, end]
+  interval_data <- avg_adult_tcs_trad_fROIs[avg_adult_tcs_trad_fROIs$time >= start & avg_adult_tcs_trad_fROIs$time <= end, ]
+  
+  ## If there are values within the interval, find the timepoint with the max value for both left and right MMPFC
+    if (nrow(interval_data) > 0) {
+    ## Find the timepoint associated with the max value for left MMPFC
+    max_lindex <- which.max(interval_data$avg_lMMPFC)
+    max_ltimepoint <- interval_data$time[max_lindex]
+            
+    ## Find the timepoint associated with the max value for right MMPFC
+    max_rindex <- which.max(interval_data$avg_rMMPFC)
+    max_rtimepoint <- interval_data$time[max_rindex]
+            
+    ## Return both timepoints for left and right MMPFC
+        return(c(max_ltimepoint, max_rtimepoint))
+  } else {
+  return(c(NA, NA))  #return NA if no timepoints are within the interval
+  }
+}
+
+# Apply the function to each row of the interval_df
+
+max_timepoints <- t(mapply(get_max_timepoint, events_TRs$onset, events_TRs$end, MoreArgs = list(avg_adult_tcs_trad_fROIs = avg_adult_tcs_trad_fROIs)))
+
+# Add the results to the interval dataframe
+
+events_TRs$max_lMMPFC_timepoint <- max_timepoints[, 1]
+events_TRs$max_rMMPFC_timepoint <- max_timepoints[, 2]
+
+```
+
+### Find children's response magnitude to previous timepoints
+
+Amygdala
+
+```{r}
+
+# Filter magnitudes for relevant timepoints for left amygdala 
+
+lamygdala_timepoints_list <- events_TRs[, c("event", "max_lamygdala_timepoint")]
+child_tcs_lamygdala <- child_tcs_amygdala[, c("time", "ID", "lamygdala")]
+child_eventsmagnitude_lamygdala <- lamygdala_timepoints_list %>%
+  inner_join(child_tcs_lamygdala, by = c("max_lamygdala_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_lamygdala <- child_eventsmagnitude_lamygdala %>%
+  select(ID, event, max_lamygdala_timepoint, lamygdala)
+
+# Shift rows/columns
+
+child_eventsmagnitude_lamygdala <- child_eventsmagnitude_lamygdala %>%
+  mutate(event = paste0("lamygdala_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(lamygdala = mean(lamygdala, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = lamygdala
+  )
+child_eventsmagnitude_lamygdala <- child_eventsmagnitude_lamygdala %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+# Filter magnitudes for relevant timepoints for right amygdala 
+
+ramygdala_timepoints_list <- events_TRs[, c("event", "max_ramygdala_timepoint")]
+child_tcs_ramygdala <- child_tcs_amygdala[, c("time", "ID", "ramygdala")]
+child_eventsmagnitude_ramygdala <- ramygdala_timepoints_list %>%
+  inner_join(child_tcs_ramygdala, by = c("max_ramygdala_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_ramygdala <- child_eventsmagnitude_ramygdala %>%
+  select(ID, event, max_ramygdala_timepoint, ramygdala)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_ramygdala <- child_eventsmagnitude_ramygdala %>%
+  mutate(event = paste0("ramygdala_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(ramygdala = mean(ramygdala, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = ramygdala
+  )
+child_eventsmagnitude_ramygdala <- child_eventsmagnitude_ramygdala %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+```
+
+FFA
+
+```{r}
+
+# Filter magnitudes for relevant timepoints for left FFA 
+
+lFFA_timepoints_list <- events_TRs[, c("event", "max_lFFA_timepoint")]
+child_tcs_lFFA <- child_tcs_fROIs[, c("time", "ID", "lFFA")]
+child_eventsmagnitude_lFFA <- lFFA_timepoints_list %>%
+  inner_join(child_tcs_lFFA, by = c("max_lFFA_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_lFFA <- child_eventsmagnitude_lFFA %>%
+  select(ID, event, max_lFFA_timepoint, lFFA)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_lFFA <- child_eventsmagnitude_lFFA %>%
+  mutate(event = paste0("lFFA_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(lFFA = mean(lFFA, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = lFFA
+  )
+child_eventsmagnitude_lFFA <- child_eventsmagnitude_lFFA %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+# Filter magnitudes for relevant timepoints for right FFA 
+
+rFFA_timepoints_list <- events_TRs[, c("event", "max_rFFA_timepoint")]
+child_tcs_rFFA <- child_tcs_fROIs[, c("time", "ID", "rFFA")]
+child_eventsmagnitude_rFFA <- rFFA_timepoints_list %>%
+  inner_join(child_tcs_rFFA, by = c("max_rFFA_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_rFFA <- child_eventsmagnitude_rFFA %>%
+  select(ID, event, max_rFFA_timepoint, rFFA)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_rFFA <- child_eventsmagnitude_rFFA %>%
+  mutate(event = paste0("rFFA_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(rFFA = mean(rFFA, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = rFFA
+  )
+child_eventsmagnitude_rFFA <- child_eventsmagnitude_rFFA %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+```
+
+STS
+
+```{r}
+
+# Filter magnitudes for relevant timepoints for left FFA 
+
+lSTS_timepoints_list <- events_TRs[, c("event", "max_lSTS_timepoint")]
+child_tcs_lSTS <- child_tcs_fROIs[, c("time", "ID", "lSTS")]
+child_eventsmagnitude_lSTS <- lSTS_timepoints_list %>%
+  inner_join(child_tcs_lSTS, by = c("max_lSTS_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_lSTS <- child_eventsmagnitude_lSTS %>%
+  select(ID, event, max_lSTS_timepoint, lSTS)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_lSTS <- child_eventsmagnitude_lSTS %>%
+  mutate(event = paste0("lSTS_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(lSTS = mean(lSTS, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = lSTS
+  )
+child_eventsmagnitude_lSTS <- child_eventsmagnitude_lSTS %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+# Filter magnitudes for relevant timepoints for right STS 
+
+rSTS_timepoints_list <- events_TRs[, c("event", "max_rSTS_timepoint")]
+child_tcs_rSTS <- child_tcs_fROIs[, c("time", "ID", "rSTS")]
+child_eventsmagnitude_rSTS <- rSTS_timepoints_list %>%
+  inner_join(child_tcs_rSTS, by = c("max_rSTS_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_rSTS <- child_eventsmagnitude_rSTS %>%
+  select(ID, event, max_rSTS_timepoint, rSTS)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_rSTS <- child_eventsmagnitude_rSTS %>%
+  mutate(event = paste0("rSTS_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(rSTS = mean(rSTS, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = rSTS
+  )
+child_eventsmagnitude_rSTS <- child_eventsmagnitude_rSTS %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+```
+
+MMPFC
+
+```{r}
+
+# Filter magnitudes for relevant timepoints for left MMPFC 
+
+lMMPFC_timepoints_list <- events_TRs[, c("event", "max_lMMPFC_timepoint")]
+child_tcs_lMMPFC <- child_tcs_fROIs[, c("time", "ID", "lMMPFC")]
+child_eventsmagnitude_lMMPFC <- lMMPFC_timepoints_list %>%
+  inner_join(child_tcs_lMMPFC, by = c("max_lMMPFC_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_lMMPFC <- child_eventsmagnitude_lMMPFC %>%
+  select(ID, event, max_lMMPFC_timepoint, lMMPFC)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_lMMPFC <- child_eventsmagnitude_lMMPFC %>%
+  mutate(event = paste0("lMMPFC_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(lMMPFC = mean(lMMPFC, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = lMMPFC
+  )
+child_eventsmagnitude_lMMPFC <- child_eventsmagnitude_lMMPFC %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+# Filter magnitudes for relevant timepoints for right MMPFC 
+
+rMMPFC_timepoints_list <- events_TRs[, c("event", "max_rMMPFC_timepoint")]
+child_tcs_rMMPFC <- child_tcs_fROIs[, c("time", "ID", "rMMPFC")]
+child_eventsmagnitude_rMMPFC <- rMMPFC_timepoints_list %>%
+  inner_join(child_tcs_rMMPFC, by = c("max_rMMPFC_timepoint" = "time"), relationship = "many-to-many")
+child_eventsmagnitude_rMMPFC <- child_eventsmagnitude_rMMPFC %>%
+  select(ID, event, max_rMMPFC_timepoint, rMMPFC)
+
+# Assign timepoint/event names
+
+child_eventsmagnitude_rMMPFC <- child_eventsmagnitude_rMMPFC %>%
+  mutate(event = paste0("rMMPFC_", event)) %>%
+  group_by(ID, event) %>%
+  summarise(rMMPFC = mean(rMMPFC, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = event,
+    values_from = rMMPFC
+  )
+child_eventsmagnitude_rMMPFC <- child_eventsmagnitude_rMMPFC %>%
+  mutate_all(~ replace(., is.nan(.), NA))
+
+```
+
+Combine results
+
+```{r}
+
+data_frames <- list(
+  child_eventsmagnitude_lamygdala,  child_eventsmagnitude_ramygdala,
+  child_eventsmagnitude_lFFA,  child_eventsmagnitude_rFFA,
+  child_eventsmagnitude_lSTS,  child_eventsmagnitude_rSTS,
+  child_eventsmagnitude_lMMPFC,  child_eventsmagnitude_rMMPFC
+)
+child_eventsmagnitude <- Reduce(function(x, y) merge(x, y, by = "ID"), data_frames)
+
+```
+
+Save events data
+
+```{r}
+
+write.csv(events_TRs, here("processed_data", "events_TRs.csv"), row.names = FALSE)
+
+```
+
+
+## Section III: Inter-region correlations (functional connectivity, fx)
+
+```{r}
+
+# General fx 
+
+## Calculate Pearson correlations for all ROIs
+
+sample_fx <- tcs_total %>%
+  group_by(ID) %>%
+  nest() %>%
+  mutate(
+    fx_rFFA_lFFA = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$lFFA, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$lFFA, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_lMMPFC = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$lMMPFC, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$lMMPFC, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_rMMPFC = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$rMMPFC, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$rMMPFC, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_lamygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$lamygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$lamygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_ramygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$ramygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$ramygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rFFA_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rFFA, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$rFFA, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_lMMPFC = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$lMMPFC, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$lMMPFC, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_rMMPFC = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$rMMPFC, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$rMMPFC, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_lamygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$lamygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$lamygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_ramygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$ramygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$ramygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lFFA_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lFFA, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lFFA, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lMMPFC_rMMPFC = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lMMPFC, seg1$rMMPFC, method = "pearson", use = "complete.obs"),
+             cor(seg2$lMMPFC, seg2$rMMPFC, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lMMPFC_lamygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lMMPFC, seg1$lamygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$lMMPFC, seg2$lamygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lMMPFC_ramygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lMMPFC, seg1$ramygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$lMMPFC, seg2$ramygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lMMPFC_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lMMPFC, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lMMPFC, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lMMPFC_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lMMPFC, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lMMPFC, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rMMPFC_lamygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rMMPFC, seg1$lamygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$rMMPFC, seg2$lamygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rMMPFC_ramygdala = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rMMPFC, seg1$ramygdala, method = "pearson", use = "complete.obs"),
+             cor(seg2$rMMPFC, seg2$ramygdala, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rMMPFC_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rMMPFC, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$rMMPFC, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_rMMPFC_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$rMMPFC, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$rMMPFC, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lamygdala_ramygdala = map_dbl(data, ~ cor(.x$lamygdala, .x$ramygdala, method = "pearson", use = "complete.obs")),
+    fx_lamygdala_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lamygdala, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lamygdala, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lamygdala_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lamygdala, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lamygdala, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_ramygdala_lSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$ramygdala, seg1$lSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$ramygdala, seg2$lSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_ramygdala_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$ramygdala, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$ramygdala, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+    fx_lSTS_rSTS = map_dbl(data, ~ {
+      seg1 <- filter(.x, time >= 0 & time <= 81)
+      seg2 <- filter(.x, time >= 86 & time <= 167)
+      mean(c(cor(seg1$lSTS, seg1$rSTS, method = "pearson", use = "complete.obs"),
+             cor(seg2$lSTS, seg2$rSTS, method = "pearson", use = "complete.obs")), na.rm = TRUE)
+    }),
+  ) %>%
+  select(ID, starts_with("fx_"))
+
+## Calculate z-scores 
+
+### Define the columns to process
+
+columns_to_process <- c("fx_rFFA_lFFA", "fx_rFFA_lMMPFC", "fx_rFFA_rMMPFC", "fx_rFFA_ramygdala", "fx_rFFA_lamygdala","fx_rFFA_lSTS", "fx_rFFA_rSTS",
+                        "fx_lFFA_lMMPFC", "fx_lFFA_rMMPFC", "fx_lFFA_ramygdala", "fx_lFFA_lamygdala", "fx_lFFA_lSTS", "fx_lFFA_rSTS",
+                        "fx_lMMPFC_rMMPFC", "fx_lMMPFC_lamygdala", "fx_lMMPFC_ramygdala", "fx_lMMPFC_lSTS", "fx_lMMPFC_rSTS", 
+                        "fx_rMMPFC_lamygdala", "fx_rMMPFC_ramygdala", "fx_rMMPFC_lSTS", "fx_rMMPFC_rSTS",
+                        "fx_lamygdala_ramygdala", "fx_lamygdala_lSTS", "fx_lamygdala_rSTS", "fx_ramygdala_lSTS", "fx_ramygdala_rSTS", "fx_lSTS_rSTS")
+
+### Loop through the columns
+
+for (column in columns_to_process) {
+  ### Calculate mean and standard deviation for the current column
+  mean_col <- mean(sample_fx[[column]], na.rm = TRUE)
+  sd_col <- sd(sample_fx[[column]], na.rm = TRUE)
+  
+  #### Compute z-scores and store them in a new column
+  zscore_column <- paste0("zscored_", column)
+  sample_fx[[zscore_column]] <- (sample_fx[[column]] - mean_col) / sd_col
+}
+sample_fx <- sample_fx %>% select(contains(c("ID", "zscored")))
+
+## Children 
+
+child_fx <- sample_fx %>% 
+  filter(ID %in% child_list)
+
+## Adults
+
+adult_fx <- sample_fx %>% 
+  filter(ID %in% adult_list)
+
+```
+
+
+## Section IV: Lateralisation index (LI)
+
+### Read data containing voxel-wise response magnitudes to the face-scene contrast
+
+```{r}
+
+# Read CSV file
+
+facescene_contrast <- read.csv(here("raw_data/facescene_contrast", "events_compiled_stats.csv"), header = TRUE, dec = ".", sep = ",")
+
+# Change column names and filter
+
+colnames(facescene_contrast) <- c("ID", "task", "run", "contrast", "mask", "voxel_index", "t.stat", "z.stat")
+facescene_contrast <- facescene_contrast[, c("ID", "mask", "voxel_index", "t.stat")]
+
+# Remove the word "sub-pixar" and trim extra whitespace
+
+facescene_contrast$ID <- gsub("[sub-pixar-]", "", facescene_contrast$ID)
+facescene_contrast$ID <- trimws(facescene_contrast$ID)
+
+# Change the name of the flipped rFFA ROI to left FFA
+
+facescene_contrast <- facescene_contrast %>%
+  mutate(mask = if_else(mask == "flipped_rFFA", "lFFA", mask))
+
+facescene_contrast <- facescene_contrast %>%
+  filter(ID %in% child_list)
+
+```
+
+### Threshold p<0.001
+
+#### Assign p-values and flag significant voxels per hemisphere and participant.
+
+```{r}
+
+child_LI_0.001 <- facescene_contrast %>%
+  rowwise() %>%
+  mutate(
+    significant = t.stat > 3.10  # flag voxels with t-stat > 3.10
+  ) %>%
+  ungroup()  # return to regular data frame
+
+```
+
+#### Calculate lateralisation index from significant voxels at threshold p<0.001
+
+```{r}
+
+# Calculate the number of significant voxels in left and right FFA per subject
+
+child_LI_0.001 <- child_LI_0.001 %>%
+  group_by(ID, mask) %>%
+  summarise(
+    significant_voxels = sum(significant, na.rm = TRUE), 
+    .groups = "drop"
+  )
+
+# Exclude participants with less than 20 voxels in the left and right masks
+
+child_LI_0.001 <- child_LI_0.001 %>%
+  group_by(ID, mask) %>%
+  summarise(significant_voxels = sum(significant_voxels, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = mask,
+    values_from = significant_voxels,
+    values_fill = 0
+  ) %>%
+  mutate(
+    total_voxels = lFFA + rFFA,
+    to_include  = if_else(total_voxels > 20, "yes", "no")
+  )
+
+child_LI_0.001 %>%
+  filter(to_include == "yes") %>%
+  count()
+
+```
+
+Cannot run analyses with LI calculated at t-stat>3.10, since only 9 subjects meet inclusion criteria (more than 20 significant voxels across hemispheres).
+
+### Threshold p<0.01
+
+#### Assign p-values and flag significant voxels per hemisphere and participant.
+
+```{r}
+
+child_LI_0.01 <- facescene_contrast %>%
+  rowwise() %>%
+  mutate(
+    significant = t.stat > 2.33  # flag voxels with t-stat > 2.33
+  ) %>%
+  ungroup()  # return to regular data frame
+
+```
+
+#### Calculate lateralisation index from significant voxels at threshold p<0.01
+
+```{r}
+
+# Calculate the number of significant voxels in left and right FFA per subject
+
+child_LI_0.01 <- child_LI_0.01 %>%
+  group_by(ID, mask) %>%
+  summarise(
+    significant_voxels = sum(significant, na.rm = TRUE), 
+    .groups = "drop"
+  )
+
+# Exclude participants with less than 20 voxels in the left and right masks
+
+child_LI_0.01 <- child_LI_0.01 %>%
+  group_by(ID, mask) %>%
+  summarise(significant_voxels = sum(significant_voxels, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = mask,
+    values_from = significant_voxels,
+    values_fill = 0
+  ) %>%
+  mutate(
+    total_voxels = lFFA + rFFA,
+    to_include  = if_else(total_voxels > 20, "yes", "no")
+  )
+
+child_LI_0.01 %>%
+  filter(to_include == "yes") %>%
+  count()
+
+```
+
+Cannot run analyses with LI calculated at t-stat>2.33, since only 44 subjects meet inclusion criteria (more than 20 significant voxels across hemispheres).
+
+Lateralisation index is instead calculated using p < 0.05 and p < 0.1.
+
+### Threshold p<0.05 (non-preregistered)
+
+#### Assign p-values and flag significant voxels per hemisphere and participant.
+
+```{r}
+
+child_LI_0.05 <- facescene_contrast %>%
+  rowwise() %>%
+  mutate(
+    significant = t.stat > 1.645  # flag voxels with t-stat > 1.645
+  ) %>%
+  ungroup()  # return to regular data frame
+
+```
+
+#### Calculate lateralisation index from significant voxels at threshold p<0.05
+
+```{r}
+
+# Calculate the number of significant voxels in left and right FFA per subject
+
+child_LI_0.05 <- child_LI_0.05 %>%
+  group_by(ID, mask) %>%
+  summarise(
+    significant_voxels = sum(significant, na.rm = TRUE), 
+    .groups = "drop"
+  )
+
+# Exclude participants with less than 20 voxels in the left and right masks
+
+child_LI_0.05 <- child_LI_0.05 %>%
+  group_by(ID, mask) %>%
+  summarise(significant_voxels = sum(significant_voxels, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = mask,
+    values_from = significant_voxels,
+    values_fill = 0
+  ) %>%
+  mutate(
+    total_voxels = lFFA + rFFA,
+    to_include  = if_else(total_voxels > 20, "yes", "no")
+  )
+
+child_LI_0.05 %>%
+  filter(to_include == "yes") %>%
+  count()
+
+# Calculate LI for included participants
+
+child_LI_0.05 <- child_LI_0.05 %>%
+mutate(
+  lateralisation_index_0.05 = if_else(
+    to_include == "yes",
+    (lFFA - rFFA) / (lFFA + rFFA),
+    NA_real_
+  )
+) %>%
+  select(ID, lateralisation_index_0.05)
+
+```
+
+### Threshold p<0.10 (non-preregistered)
+
+#### Assign p-values and flag significant voxels per hemisphere and participant.
+
+```{r}
+
+child_LI_0.1 <- facescene_contrast %>%
+  rowwise() %>%
+  mutate(
+    significant = t.stat > 1.289  # flag voxels with t-stat > 1.289
+  ) %>%
+  ungroup()  # return to regular data frame
+
+```
+
+#### Calculate lateralisation index from significant voxels at threshold p<0.10
+
+```{r}
+
+# Calculate the number of significant voxels in left and right FFA per subject
+
+child_LI_0.1 <- child_LI_0.1 %>%
+  group_by(ID, mask) %>%
+  summarise(
+    significant_voxels = sum(significant, na.rm = TRUE), 
+    .groups = "drop"
+  )
+
+# Exclude participants with less than 20 voxels in the left and right masks
+
+child_LI_0.1 <- child_LI_0.1 %>%
+  group_by(ID, mask) %>%
+  summarise(significant_voxels = sum(significant_voxels, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = mask,
+    values_from = significant_voxels,
+    values_fill = 0
+  ) %>%
+  mutate(
+    total_voxels = lFFA + rFFA,
+    to_include  = if_else(total_voxels > 20, "yes", "no")
+  )
+
+child_LI_0.1 %>%
+  filter(to_include == "yes") %>%
+  count()
+
+# Calculate LI for included participants
+
+child_LI_0.1 <- child_LI_0.1 %>%
+  mutate(
+    lateralisation_index_0.1 = if_else(
+      to_include == "yes",
+      (lFFA - rFFA) / (lFFA + rFFA),
+      NA_real_
+    )
+  ) %>%
+  select(ID, lateralisation_index_0.1)
+
+```
+
+
+## Section V: Combine all children dependent variables into one spreadsheet and save files
+
+```{r}
+
+data_frames <- list(
+  child_fm,  child_eventsmagnitude,
+  child_fx,  child_LI_0.05, child_LI_0.1
+)
+child_MRIvariables <- Reduce(function(x, y) merge(x, y, by = "ID"), data_frames)
+write.csv(child_MRIvariables, here("processed_data", "child_MRIvariables.csv"), row.names = FALSE)
+
+```
+
+
+```{r}
+
+markdownToHTML("FRIC_MRIvariables.Rmd", output = "FRIC_MRIvariables.html")
+
+```
+
