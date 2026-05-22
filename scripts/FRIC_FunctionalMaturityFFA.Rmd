@@ -43,6 +43,7 @@ Structure:
 - Section I: Functional connectivity effects on functional maturity of right or left FFA
 - Section II: Functional maturity of MMPFC/amygdala/STS effects on functional maturity of right or left FFA (non-preregistered)
 - Section III: Correlations between fMRI variables
+- Section IV: Sensitivity analyses for main findings and motion (non-preregistered)
 
 
 ## Section I: Functional connectivity effects on functional maturity of right or left FFA
@@ -719,7 +720,7 @@ plot_rFFA_MMPFC <- create_plot(data_plot_rFFA_MMPFC, zscored_value, fm_rFFA, cus
   annotate(
     "text",
     x = Inf, y = -Inf,                        # bottom right corner
-    label = "Fx right FFA - right MMPFC effect:\nβ(SE)=0.17(0.08), p=0.045",
+    label = "Fx right FFA - right MMPFC effect:\nβ(SE)=0.17(0.08), p=0.045 (post-hoc*)",
     hjust = 1.05,      # slightly >1 for proper right alignment
     vjust = -0.25,      # nudges text up from bottom
     size = 4,
@@ -1383,6 +1384,83 @@ heatmap_plot <- ggplot(data_plot, aes(x = Variable1, y = Variable2, fill = value
 
 heatmap_plot
 ggsave(here("results/figures", "Fm_Correlations.png"), plot = heatmap_plot, width = 7, height = 5.5, units = "in", dpi = 300)
+
+```
+
+
+## Section IV: Sensitivity analyses for main findings and motion (non-preregistered)
+
+### Relationship between functional connectivity of right FFA and right MMPFC and functional maturity of right FFA
+
+To explore if motion moderated the association between functional connectivity of right FFA and right MMPFC, we tested interaction effects between mean FD and right MMPFC–right FFA connectivity in a separate model.
+
+```{r}
+
+# Model
+
+model_rFFA_fm_rFFA_rMMPFC_fx <- lm(fm_rFFA ~ fx_rFFA_rMMPFC*MeanFD + Age, data = child_MRIvariables)
+summary(model_rFFA_fm_rFFA_rMMPFC_fx)
+model_rFFA_fm_rFFA_rMMPFC_fx <- tidy(model_rFFA_fm_rFFA_rMMPFC_fx)
+
+# Save model
+
+model_rFFA_fm_rFFA_rMMPFC_fx <- model_rFFA_fm_rFFA_rMMPFC_fx %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(model_rFFA_fm_rFFA_rMMPFC_fx, here("results/RQ2", "rFFA_fm_rFFA_rMMPFC_fx_sens.csv"), row.names = FALSE)
+
+```
+
+### Functional maturity of STS and functional maturity of right FFA (non-preregistered)
+
+Similarly, to explore if motion moderated the association between functional maturity of STS and right FFA, we tested interaction effects between mean FD and functional maturity of right FFA in a separate model.
+
+Right FFA
+
+```{r}
+
+# Data wrangling
+
+long_data_STS <- long_data %>%
+  select(
+    ID,
+    fm_rFFA,
+    fm_rSTS,
+    fm_lSTS,
+    Age,
+    MeanFD
+  )
+
+# Model
+
+model_rFFA_fm_STS_fm <- lmer(fm_rlSTS ~ fm_rFFA*MeanFD + Hemisphere + Age + (1|ID), data = long_data_STS)
+summary(model_rFFA_fm_STS_fm)
+model_rFFA_fm_STS_fm <- tidy(model_rFFA_fm_STS_fm)
+
+# Save model
+
+model_rFFA_fm_STS_fm <- model_rFFA_fm_STS_fm %>%
+  mutate(
+    estimate = round(estimate, 2),
+    std.error = round(std.error, 2),
+    statistic = round(statistic, 2),
+    p.value = if_else(
+      p.value < 0.001,
+      format(p.value, scientific = TRUE, digits = 4),
+      sprintf("%.3f", p.value)
+    )
+  )
+
+write.csv(model_rFFA_fm_STS_fm, here("results/RQ2", "rFFA_fm_STS_fm_sens.csv"), row.names = FALSE)
 
 ```
 

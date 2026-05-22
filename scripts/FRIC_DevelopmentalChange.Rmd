@@ -234,18 +234,19 @@ plot_FFA <- ggplot(data_plot_FFA, aes(x = age, y = fm, color = hemisphere)) +
   scale_color_manual(values = custom_colours_FFA) +  
   labs(title = "",
        x = "Age",
-       y = "Functional maturity",
+       y = "",
        color = "FFA Hemisphere") +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12, face = "bold"),
     axis.text = element_text(size = 12),   
     axis.title = element_text(size = 14, face = "bold"),
     strip.text = element_text(size = 14, face = "bold"),
     strip.background = element_blank(),
     axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
     plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
   coord_cartesian(ylim = c(-3, 3)) +
   annotate(
@@ -266,19 +267,18 @@ plot_MMPFC <- ggplot(data_plot_MMPFC, aes(x = age, y = fm, color = hemisphere)) 
   scale_color_manual(values = custom_colours_MMPFC) +  
   labs(title = "",
        x = "Age",
-       y = "",
+       y = "Functional maturity",
        color = "MMPFC Hemisphere") +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12, face = "bold"),
     axis.text = element_text(size = 12),   
     axis.title = element_text(size = 14, face = "bold"),
     strip.text = element_text(size = 14, face = "bold"),
     strip.background = element_blank(),
     axis.line.x = element_blank(),
-    axis.text.y = element_blank(),
     plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
   coord_cartesian(ylim = c(-3, 3))  +
   annotate(
@@ -306,8 +306,8 @@ plot_amygdala <- ggplot(data_plot_amygdala, aes(x = age, y = fm, color = hemisph
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12, face = "bold"),
     axis.text = element_text(size = 12),   
     axis.title = element_text(size = 14, face = "bold"),
     strip.text = element_text(size = 14, face = "bold"),
@@ -340,13 +340,14 @@ plot_STS <- ggplot(data_plot_STS, aes(x = age, y = fm, color = hemisphere)) +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    legend.text = element_text(size = 16),
-    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12, face = "bold"),
     axis.text = element_text(size = 12),   
     axis.title = element_text(size = 14, face = "bold"),
     strip.text = element_text(size = 14, face = "bold"),
     strip.background = element_blank(),
     axis.line.x = element_blank(),
+    axis.text.y = element_blank(),
     plot.title = element_text(hjust = 0.5, size = 14, face = "bold")) +   
   coord_cartesian(ylim = c(-3, 3)) +
   annotate(
@@ -361,11 +362,11 @@ plot_STS <- ggplot(data_plot_STS, aes(x = age, y = fm, color = hemisphere)) +
 
 # Combine and save plots
 
-fm_age <- (plot_FFA | plot_MMPFC | plot_amygdala | plot_STS) +  
+fm_age <- (plot_MMPFC | plot_amygdala | plot_STS | plot_FFA ) +  
   plot_annotation(title = "Functional maturity across Age") &  
   theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
 fm_age  
-ggsave(here("results/figures", "Fm_age.png"), plot = fm_age, width = 17, height = 5, units = "in", dpi = 300)
+ggsave(here("results/figures", "Fm_age.png"), plot = fm_age, width = 13, height = 5, units = "in", dpi = 300)
 
 ```
 
@@ -1087,19 +1088,89 @@ events_TRs <- read_csv(here("processed_data", "events_TRs.csv"), col_names=TRUE)
 events_TRs <- events_TRs[,c(1:3)]
 custom_colours <- c("#D34835", "#DDA86A", "#83AC66", "#87BACF", "#6989F3", "#652975")
 
-# FFA Timecourses, including events
 
-## Plot
+# Figure in main text
+
+Plot_rFFA <- ggplot(
+  subset(data_plot_FFA, hemisphere == "right")
+) +
+  geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup),
+            size = 1.2, alpha = 1) +
+  geom_hline(yintercept = 0, color = "grey", linewidth = 0.8) +
+  geom_text(
+    data = subset(
+      data_plot_FFA,
+      hemisphere == "right" &
+      time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+                  60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110,
+                  115, 120, 125, 130, 135, 140, 145, 150, 155,
+                  160, 165, 170)
+    ),
+    aes(x = time, y = -0.07, label = time),
+    vjust = 0,
+    size = 3,
+    color = "black",
+    angle = 90
+  ) +
+  theme_classic() +
+  scale_color_manual(values = custom_colours) +
+  scale_y_continuous(limits = c(-1.1, 1.1)) +
+  scale_x_continuous(
+    breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55,
+               60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110,
+               115, 120, 125, 130, 135, 140, 145, 150, 155,
+               160, 165, 170),
+    labels = NULL
+  ) +
+  labs(
+    title = "Right FFA",
+    y = "Response magnitude",
+    color = "Age group"
+  ) +
+  theme(
+    legend.position = "bottom",
+    axis.title.x = element_text(size = 16),
+    axis.title.y = element_text(size = 16),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    axis.ticks.x = element_blank(),
+    axis.line.x = element_blank(),
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.line.y = element_line(linewidth = 0.8, color = "black"),
+    legend.text = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+## Add the shaded rectangles for events
+
+Plot_rFFA <- Plot_rFFA + 
+  geom_rect(data = events_TRs, 
+            aes(xmin = onset, xmax = end, ymin = -1.1, ymax = 1.1, fill = trial_type), 
+            alpha = 0.3, color = NA) +
+  scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
+  guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
+
+print(Plot_rFFA)
+
+## Save plot
+
+ggsave(here("results/figures", "TCs_rFFA.png"), plot = Plot_rFFA, width = 15, height = 5, units = "in", dpi = 300)
+
+# Supplementary figure
+
+## FFA Timecourses, including events
+
+### Plot
 
 Plot_FFA <- ggplot(data_plot_FFA) +
   geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
-  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_hline(yintercept = 0, color = "grey", linewidth = 0.8) +
   geom_text(data = data_plot_FFA[data_plot_FFA$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
             aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
   facet_wrap(~ hemisphere, scales = "free_y") +
   theme_classic() +
   scale_color_manual(values = custom_colours) +
-  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_y_continuous(limits = c(-1.1, 1.1)) +
   scale_x_continuous(
     breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170), 
     labels = NULL
@@ -1125,28 +1196,29 @@ Plot_FFA <- ggplot(data_plot_FFA) +
     legend.title = element_text(size = 16, face = "bold")
   )
 
-## Add the shaded rectangles for events
+### Add the shaded rectangles for events
 
 Plot_FFA <- Plot_FFA + 
   geom_rect(data = events_TRs, 
-            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            aes(xmin = onset, xmax = end, ymin = -1.1, ymax = 1.1, fill = trial_type), 
             alpha = 0.3, color = NA) +
   scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
   guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
 
 print(Plot_FFA)
 
-# MMPFC Timecourses, including events
+
+## MMPFC Timecourses, including events
 
 Plot_MMPFC <- ggplot(data_plot_MMPFC) +
   geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
-  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_hline(yintercept = 0, color = "grey", linewidth = 0.8) +
   geom_text(data = data_plot_MMPFC[data_plot_MMPFC$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
             aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
   facet_wrap(~ hemisphere, scales = "free_y") +
   theme_classic() +
   scale_color_manual(values = custom_colours) +
-  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_y_continuous(limits = c(-1.1, 1.1)) +
   scale_x_continuous(
     breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
     labels = NULL
@@ -1172,40 +1244,40 @@ Plot_MMPFC <- ggplot(data_plot_MMPFC) +
     legend.title = element_text(size = 16, face = "bold")
   )
 
-## Add the shaded rectangles for events
+### Add the shaded rectangles for events
 
 Plot_MMPFC <- Plot_MMPFC + 
   geom_rect(data = events_TRs, 
-            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            aes(xmin = onset, xmax = end, ymin = -1.1, ymax = 1.1, fill = trial_type), 
             alpha = 0.3, color = NA) +
   scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
   guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
 
-## Get the 10th "faces" event (pink box)
+### Get the 10th "faces" event (pink box)
 
 pink_boxes <- events_TRs[events_TRs$trial_type == "faces",]
 tenth_pink_box <- pink_boxes[10,]  #get the 10th pink box
 
-## Adjust the y position for the asterisk to stay within the valid range
+### Adjust the y position for the asterisk to stay within the valid range
 
 Plot_MMPFC <- Plot_MMPFC +
   geom_text(data = tenth_pink_box, 
-            aes(x = (onset + end) / 2 - 1, y = 1.40, label = "*"),  # Adjust y to fit within plot limits
+            aes(x = (onset + end) / 2 - 1, y = 1.05, label = "*"),  # Adjust y to fit within plot limits
             size = 8, color = "black", fontface = "bold", vjust = 0)
 
 print(Plot_MMPFC)
 
-# Amygdala Timecourses, including events
+## Amygdala Timecourses, including events
 
 Plot_amygdala <- ggplot(data_plot_amygdala) +
   geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
-  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_hline(yintercept = 0, color = "grey", linewidth = 0.8) +
   geom_text(data = data_plot_amygdala[data_plot_amygdala$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
             aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
   facet_wrap(~ hemisphere, scales = "free_y") +
   theme_classic() +
   scale_color_manual(values = custom_colours) +
-  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_y_continuous(limits = c(-1.1, 1.1)) +
   scale_x_continuous(
     breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
     labels = NULL
@@ -1231,26 +1303,28 @@ Plot_amygdala <- ggplot(data_plot_amygdala) +
     legend.title = element_text(size = 16, face = "bold")
   )
 
+### Add the shaded rectangles for events
+
 Plot_amygdala <- Plot_amygdala + 
   geom_rect(data = events_TRs, 
-            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            aes(xmin = onset, xmax = end, ymin = -1.1, ymax = 1.1, fill = trial_type), 
             alpha = 0.3, color = NA) +
   scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
   guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
 
 print(Plot_amygdala)
 
-# STS Timecourses, including events
+## STS Timecourses, including events
 
 Plot_STS <- ggplot(data_plot_STS) +
   geom_line(aes(x = time, y = value, color = AgeGroup, group = AgeGroup), size = 1.2, alpha = 1) +
-  geom_hline(yintercept = 0, color = "grey", size = 0.8) +
+  geom_hline(yintercept = 0, color = "grey", linewidth = 0.8) +
   geom_text(data = data_plot_STS[data_plot_STS$time %in% c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),], 
             aes(x = time, y = -0.07, label = time), vjust = 0, size = 3, color = "black", angle = 90) +
   facet_wrap(~ hemisphere, scales = "free_y") +
   theme_classic() +
   scale_color_manual(values = custom_colours) +
-  scale_y_continuous(limits = c(-1.5, 1.5)) +
+  scale_y_continuous(limits = c(-1.1, 1.1)) +
   scale_x_continuous(
     breaks = c(0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150, 155, 160, 165, 170),
     labels = NULL
@@ -1276,28 +1350,30 @@ Plot_STS <- ggplot(data_plot_STS) +
     legend.title = element_text(size = 16, face = "bold")
   )
 
+### Add the shaded rectangles for events
+
 Plot_STS <- Plot_STS + 
   geom_rect(data = events_TRs, 
-            aes(xmin = onset, xmax = end, ymin = -1.5, ymax = 1.5, fill = trial_type), 
+            aes(xmin = onset, xmax = end, ymin = -1.1, ymax = 1.1, fill = trial_type), 
             alpha = 0.3, color = NA) +
   scale_fill_manual(values = c("faces" = "#F9B6C7", "scenes" = "#3B7D23")) +
   guides(fill = guide_legend(title = "Event type"), title.theme = element_text(face = "bold"))
 
-## Get the 10th "faces" event (pink box)
+### Get the 10th "faces" event (pink box)
 
 pink_boxes <- events_TRs[events_TRs$trial_type == "faces",]
 fifth_pink_box <- pink_boxes[5,]  #get the 10th pink box
 
-## Adjust the y position for the asterisk to stay within the valid range
+### Adjust the y position for the asterisk to stay within the valid range
 
 Plot_STS <- Plot_STS +
   geom_text(data = fifth_pink_box, 
-            aes(x = (onset + end) / 2 - 1, y = 1.40, label = "*"),  # Adjust y to fit within plot limits
+            aes(x = (onset + end) / 2 - 1, y = 1.05, label = "*"),  # Adjust y to fit within plot limits
             size = 8, color = "black", fontface = "bold", vjust = 0)
 
 print(Plot_STS)
 
-# Save plots
+## Save plots
 
 ggsave(here("results/figures", "TCs_FFA.png"), plot = Plot_FFA, width = 15, height = 5, units = "in", dpi = 300)
 ggsave(here("results/figures", "TCs_MMPFC.png"), plot = Plot_MMPFC, width = 15, height = 5, units = "in", dpi = 300)

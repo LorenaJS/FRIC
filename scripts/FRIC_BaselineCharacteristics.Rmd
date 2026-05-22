@@ -24,6 +24,7 @@ library("NCmisc") #toolbox
 library("stringr") #data manipulation
 library("vtable") #summary tables
 library("gtsummary") #summary tables
+library("patchwork") #combine plots
 
 ```
 
@@ -82,6 +83,14 @@ participants_filtered$Age <- as.numeric(participants_filtered$Age)
 participants_filtered$MeanFD <- as.numeric(participants_filtered$MeanFD)
 participants_filtered$Gender <- as.factor(participants_filtered$Gender)
 
+# Create IQ variable
+
+participants_filtered[participants_filtered == "n/a"] <- NA
+participants_filtered$raw_IQ <- coalesce(participants_filtered$"WPPSI BD raw", participants_filtered$"KBIT_raw")
+participants_filtered$raw_IQ <- as.numeric(participants_filtered$raw_IQ)
+participants_filtered$scaled_IQ <- coalesce(participants_filtered$"WPPSI BD scaled", participants_filtered$"KBIT_standard")
+participants_filtered$scaled_IQ <- as.numeric(participants_filtered$scaled_IQ)
+
 ```
 
 
@@ -111,6 +120,10 @@ shapiro.test(participants_filtered$Age)
 hist(participants_filtered$Age) 
 shapiro.test(participants_filtered$MeanFD)
 hist(participants_filtered$MeanFD) 
+shapiro.test(participants_filtered$raw_IQ)
+hist(participants_filtered$raw_IQ) 
+shapiro.test(participants_filtered$scaled_IQ)
+hist(participants_filtered$scaled_IQ) 
 
 ```
 
@@ -118,14 +131,19 @@ hist(participants_filtered$MeanFD)
 
 ```{r}
 
-targetdata <- participants_filtered[,c(2,4,5,24)]
+# Filter child participants
+
+children_filtered <- participants_filtered %>%
+  filter(ID %in% child_list)
+
+targetdata <- children_filtered[,c(2,3,5,6,24, 29, 30)]
 table_dem <- tbl_summary(
   data      = targetdata,
-  by        = Child_Adult,
+  by        = AgeGroup,
   statistic = list(
-    c("Age", "MeanFD") ~ "{mean} ({sd}); {median} ({min}, {max})"
+    c("Age", "MeanFD", "raw_IQ", "scaled_IQ") ~ "{median} ({min}-{max}; {mean} ({sd}))"
   ),
-  digits    = all_continuous() ~ 3,
+  digits    = all_continuous() ~ 2,
   missing   = "no",               # hide missing row entirely
   include   = everything()
 )
@@ -133,40 +151,69 @@ table_dem
 
 ```
 
-#### Correlation between motion and age
+#### Correlation between motion and metrics
 
 ```{r}
 
-children_filtered <- participants_filtered %>%
-  filter(ID %in% child_list)
-cor_result <- cor.test(children_filtered$Age, children_filtered$MeanFD, method = "spearman", use = "complete.obs")
-n <- sum(complete.cases(children_filtered$Age, children_filtered$MeanFD))
-rho <- round(cor_result$estimate, 2)
-p <- if (cor_result$p.value < 0.001) {
-  format(cor_result$p.value, scientific = TRUE, digits = 4)
-} else {
-  sprintf("%.3f", cor_result$p.value)
+# Function to create formatted correlation text
+
+create_motion_text <- function(variable1, variable2, label) {
+  
+  cor_result <- cor.test(
+    children_filtered[[variable1]],
+    children_filtered[[variable2]],
+    method = "spearman",
+    use = "complete.obs"
+  )
+  
+  n <- sum(
+    complete.cases(
+      children_filtered[[variable1]],
+      children_filtered[[variable2]]
+    )
+  )
+  
+  rho <- round(cor_result$estimate, 2)
+  
+  p <- if (cor_result$p.value < 0.001) {
+    format(cor_result$p.value, scientific = TRUE, digits = 4)
+  } else {
+    sprintf("%.3f", cor_result$p.value)
+  }
+  
+  df <- n - 2
+  
+  paste0(
+    label, " was not correlated with age in children ",
+    "(Spearman correlation test (n = ", n, "): ",
+    "r_s(", df, ") = ", rho, ", p = ", p, ")."
+  )
 }
 
-df <- n - 2
+# Create footnote text for both metrics
 
-```
+footnote_fd_age <- create_motion_text("Age", "MeanFD", "Mean FD and age")
+footnote_dvars_age <- create_motion_text("Age", "MeanDVARS", "Mean DVARS and age")
+footnote_fd_IQ <- create_motion_text("scaled_IQ", "MeanFD", "Mean FD and standard IQ")
 
-##### Create footnote text, add and save table
 
-```{r}
+# Combine into one footnote
 
-# Convert gtsummary table to tibble
+footnote_text <- paste(footnote_fd_age, footnote_dvars_age, footnote_fd_IQ)
+
+# Create footnote text, add and save table
+
+## Convert gtsummary table to tibble
 
 table_dem <- as_tibble(table_dem)
+
 colnames(table_dem) <- c(
   "Characteristic",
   "Adults (N=33)",
   "Children (N=117)"
 )
 
-# Add footnote as final row
-
+## Add footnote as final row
 table_dem <- bind_rows(
   table_dem,
   tibble(
@@ -176,11 +223,100 @@ table_dem <- bind_rows(
   )
 )
 
-# Save
+print(table_dem)
+
+## Save
 write.csv(
   table_dem,
   here("results/demographics", "Sample_characteristics.csv"),
   row.names = FALSE
+)
+
+## Visualisation of MeanFD and MeanDVARS by age
+
+### Create custom colours 
+
+custom_colours <- c("#D34835", "#DDA86A", "#83AC66", "#87BACF", "#6989F3", "#652975")
+
+### Format data to plot
+
+data_plot_FD <- children_filtered %>%
+  filter(!is.na(MeanFD), !is.na(AgeGroup)) %>%
+  group_by(AgeGroup) %>%
+  summarise(
+    mean_value = mean(MeanFD, na.rm = TRUE),
+    se_value   = sd(MeanFD, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+data_plot_DVARS <- children_filtered %>%
+  filter(!is.na(MeanDVARS), !is.na(AgeGroup)) %>%
+  group_by(AgeGroup) %>%
+  summarise(
+    mean_value = mean(MeanDVARS, na.rm = TRUE),
+    se_value   = sd(MeanDVARS, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"
+  )
+
+### General plotting function
+
+generate_plot <- function(data, feature, subtitle, show_legend = TRUE, y_label = NULL, legend_pos = "bottom") {
+  ggplot(data, aes(x = as.factor(AgeGroup), y = mean_value, fill = as.factor(AgeGroup))) +
+    geom_bar(stat = "identity", position = "stack", width = 1, alpha = 1) +
+    geom_errorbar(aes(ymin = mean_value - se_value, ymax = mean_value + se_value), linewidth = 1, width = 0) +
+    geom_hline(yintercept = 0, linetype = "solid", size = 1, color = "black") +
+    scale_fill_manual(values = custom_colours) +
+    labs(
+      title = subtitle,
+      x = "",
+      y = y_label,
+      fill = "Age Group"
+    ) +
+    theme_classic() +
+    theme(
+      strip.text      = element_text(size = 14, face = "bold"),
+      strip.background= element_blank(),
+      legend.position = ifelse(show_legend, legend_pos, "right"),
+      legend.text     = element_text(size = 16),
+      legend.title    = element_text(size = 14, face = "bold"),
+      axis.title      = element_text(size = 14, face = "bold"),
+      axis.text       = element_text(size = 12),
+      axis.title.x    = element_blank(),
+      axis.text.x     = element_blank(),
+      axis.ticks.x    = element_blank(),
+      axis.line.x     = element_blank(),
+      plot.title      = element_text(hjust = 0.5, size = 14, face = "bold"),
+      axis.line.y     = element_line(size = 0.8, color = "black")
+    )
+}
+
+## Generate plots with one reusable function
+
+plot_FD <- generate_plot(data_plot_FD, "Mean FD", "", show_legend = TRUE, y_label = "Mean FD")
+plot_DVARS <- generate_plot(data_plot_DVARS, "Mean DVARS", "", show_legend = TRUE, y_label = "Mean DVARS")
+
+## Combine plots with a common centered title and shared legend
+
+final_plot <- (plot_FD | plot_DVARS ) +  
+  plot_layout(ncol = 2, guides = "collect") +
+  plot_annotation(
+    title = ""
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    plot.title = element_text(size = 14, hjust = 0.5, face = "bold")
+  )
+print(final_plot)
+
+### Save
+
+ggsave(
+  here("results/figures", "FD_DVARS_by_agegroup.png"),
+  final_plot,
+  width = 8,
+  height = 4
 )
 
 ```
